@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대 (자동 업데이트 로더)
 // @namespace    https://github.com/yusoo-dev/userscripts
-// @version      1.2.0
+// @version      1.3.0
 // @description  GitHub의 최신 웃대 스크립트를 받아 실행합니다. 한 번 설치하면 업데이트 확인이 필요 없습니다.
 // @match        *://*.humoruniv.com/*
 // @match        *://humoruniv.com/*
@@ -18,12 +18,13 @@
  *  - 매 페이지마다 확인. CDN 캐시를 피하려고 고유 쿼리(?t=)를 붙여 요청.
  *  - raw 주소가 실패하면 GitHub API로 한 번 더 시도.
  *  - 새 버전을 받으면 화면 아래에 알림(탭하면 즉시 새로고침 적용).
- *  - DEBUG=true면 매 페이지 상태(실행 버전/받은 버전/오류)를 알림으로 표시.
+ *  - 평소엔 "새 버전 받음"과 "실패"만 알림. 매 페이지 상태까지 보려면
+ *    웃대 페이지 콘솔에서 localStorage.setItem('uw-loader:debug','1') (끄기: removeItem).
  */
 (function () {
   'use strict';
 
-  const DEBUG = true; // 동작 확인이 끝나면 false
+  const DEBUG = (() => { try { return localStorage.getItem('uw-loader:debug') === '1'; } catch { return false; } })();
   const SOURCES = [
     () => `https://raw.githubusercontent.com/yusoo-dev/userscripts/main/humoruniv.user.js?t=${Date.now()}`,
     () => `https://api.github.com/repos/yusoo-dev/userscripts/contents/humoruniv.user.js?ref=main&t=${Date.now()}`,
