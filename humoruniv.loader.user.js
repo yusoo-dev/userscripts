@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대 (자동 업데이트 로더)
 // @namespace    https://github.com/yusoo-dev/userscripts
-// @version      1.3.0
+// @version      1.4.0
 // @description  GitHub의 최신 웃대 스크립트를 받아 실행합니다. 한 번 설치하면 업데이트 확인이 필요 없습니다.
 // @match        *://*.humoruniv.com/*
 // @match        *://humoruniv.com/*
@@ -17,7 +17,8 @@
  *  3) 저장된 코드가 없는 첫 실행만 받아오자마자 실행
  *  - 매 페이지마다 확인. CDN 캐시를 피하려고 고유 쿼리(?t=)를 붙여 요청.
  *  - raw 주소가 실패하면 GitHub API로 한 번 더 시도.
- *  - 새 버전을 받으면 화면 아래에 알림(탭하면 즉시 새로고침 적용).
+ *  - 새 버전을 받으면 'uw-loader:updated' 이벤트를 보냄 → 알림 UI는 본체가 표시(본체와 함께 자동 업데이트됨).
+ *    본체가 이벤트를 처리하지 않으면(구버전) 로더가 화면 위쪽에 직접 알림.
  *  - 평소엔 "새 버전 받음"과 "실패"만 알림. 매 페이지 상태까지 보려면
  *    웃대 페이지 콘솔에서 localStorage.setItem('uw-loader:debug','1') (끄기: removeItem).
  */
@@ -51,7 +52,7 @@
       if (!toastEl) {
         toastEl = document.createElement('div');
         toastEl.style.cssText = [
-          'position:fixed', 'left:50%', 'bottom:16px', 'transform:translateX(-50%)',
+          'position:fixed', 'left:50%', 'top:52px', 'transform:translateX(-50%)',
           'z-index:2147483646', 'max-width:92vw', 'padding:8px 12px', 'border-radius:8px',
           'background:rgba(30,30,30,.95)', 'color:#eee', 'font:12px/1.4 sans-serif',
           'box-shadow:0 4px 16px rgba(0,0,0,.4)', 'word-break:break-all',
@@ -99,7 +100,10 @@
       const saved = store.set(KEY_CODE, code);
       if (!ran) { run(code); if (DEBUG) toast(`로더: v${latestVer} 받아서 실행`); return; }
       if (!saved) { toast(`로더: v${latestVer} 저장 실패(저장공간 접근 불가)`); return; }
-      toast(`새 버전 v${latestVer} 받음 (현재 v${runningVer}) · 탭하면 바로 적용`, () => location.reload());
+      // 본체가 알림을 띄우면 detail.handled = true
+      const ev = new CustomEvent('uw-loader:updated', { detail: { version: latestVer, current: runningVer, handled: false } });
+      window.dispatchEvent(ev);
+      if (!ev.detail.handled) toast(`새 버전 v${latestVer} 받음 (현재 v${runningVer}) · 탭하면 바로 적용`, () => location.reload());
     })
     .catch((e) => toast(`로더: 업데이트 확인 실패 · ${e.message}`));
 })();

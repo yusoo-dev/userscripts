@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.35.0
+// @version      1.35.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.35.0';
+  const SCRIPT_VERSION = '1.35.1';
   const SHOW_VERSION = true;
 
   const params = new URLSearchParams(location.search);
@@ -1582,6 +1582,43 @@
   }
 
   /* ──────────────────────────────────────────────────────────
+   * 9-2. 새 버전 알림 (로더 사용 시)
+   *  - 로더가 새 버전을 받아 저장하면 'uw-loader:updated' 이벤트 → 상단 메뉴 바로 아래 알림.
+   *  - 이미 저장돼 있는데 아직 적용 안 된 경우(이전 페이지에서 받음)도 페이지 열 때 알림.
+   *  - 알림을 탭하면 새로고침해서 즉시 적용.
+   * ────────────────────────────────────────────────────────── */
+
+  const versionOfCode = (code) => (String(code || '').match(/@version\s+([\w.\-]+)/) || [])[1] || '';
+
+  function showUpdateBanner(ver) {
+    const show = () => {
+      if (!document.body || document.querySelector('uw-update')) return;
+      const b = el('uw-update', {
+        display: 'block', position: 'fixed', left: '50%', top: '48px', transform: 'translateX(-50%)',
+        'z-index': '2147483645', padding: '8px 14px', 'border-radius': '18px',
+        background: '#ff5a5a', color: '#fff', 'font-size': '13px', 'font-weight': 'bold',
+        'white-space': 'nowrap', 'box-shadow': '0 4px 14px rgba(0,0,0,.4)', cursor: 'pointer',
+      });
+      b.textContent = `새 버전 v${ver} · 탭하여 적용`;
+      b.addEventListener('click', () => location.reload());
+      document.body.appendChild(b);
+      setTimeout(() => b.remove(), 10000);
+    };
+    if (document.body) show(); else document.addEventListener('DOMContentLoaded', show, { once: true });
+  }
+
+  function initUpdateNotice() {
+    window.addEventListener('uw-loader:updated', (e) => {
+      if (e.detail) e.detail.handled = true;
+      showUpdateBanner(e.detail?.version || '');
+    });
+    let stored = null;
+    try { stored = localStorage.getItem('uw-loader:code'); } catch {}
+    const v = versionOfCode(stored);
+    if (v && v !== SCRIPT_VERSION) showUpdateBanner(v);
+  }
+
+  /* ──────────────────────────────────────────────────────────
    * 10. 메인 루프 / 생명주기 (Lifecycle)
    * ────────────────────────────────────────────────────────── */
 
@@ -1645,6 +1682,7 @@
   watchNavi();
   initLoadMore();
   initHeaderBarFix();
+  initUpdateNotice();
   window.addEventListener('pageshow', (e) => {
     if (!document.body) return;
     refreshAllReadMarks();
