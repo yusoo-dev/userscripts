@@ -1,9 +1,12 @@
 # userscripts
 
-개인용 유저스크립트 모음 (Violentmonkey / Tampermonkey).
+개인용 유저스크립트 모음.
 
-| 스크립트 | 설치 |
+## 웃대 (humoruniv.com)
+
+| 파일 | 용도 |
 |---|---|
-| 웃대 (humoruniv.com) | [humoruniv.user.js](https://raw.githubusercontent.com/yusoo-dev/userscripts/main/humoruniv.user.js) |
+| [humoruniv.user.js](https://raw.githubusercontent.com/yusoo-dev/userscripts/main/humoruniv.user.js) | 본체. Violentmonkey/Tampermonkey는 이 주소로 설치하면 `@version` 증가 시 자동 업데이트 |
+| [humoruniv.loader.user.js](https://raw.githubusercontent.com/yusoo-dev/userscripts/main/humoruniv.loader.user.js) | 로더. 자동 업데이트를 지원하지 않는 앱(유니콘 Pro 등)용. 한 번 설치하면 GitHub 최신 본체를 받아 실행 |
 
-설치 링크를 열면 확장 프로그램 설치 화면이 뜹니다. 이후 `@version`이 올라가면 자동 업데이트됩니다.
+> 로더와 본체를 동시에 설치하지 마세요(본체에 중복 실행 방지가 있지만 하나만 쓰는 것을 권장).
