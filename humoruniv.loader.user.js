@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대 (자동 업데이트 로더)
 // @namespace    https://github.com/yusoo-dev/userscripts
-// @version      1.5.0
+// @version      1.6.0
 // @description  GitHub의 최신 웃대 스크립트를 받아 실행합니다. 한 번 설치하면 업데이트 확인이 필요 없습니다.
 // @match        *://*.humoruniv.com/*
 // @match        *://humoruniv.com/*
@@ -15,8 +15,11 @@
  *  1) 페이지 열릴 때: 이 기기에 저장해 둔 코드(localStorage)를 즉시 실행 → 지연·깜빡임 없음
  *  2) 동시에 GitHub에서 최신 코드를 받아 저장 → 다음 페이지부터 새 버전 적용
  *  3) 저장된 코드가 없는 첫 실행만 받아오자마자 실행
- *  - 매 페이지마다 확인. CDN 캐시를 피하려고 고유 쿼리(?t=)를 붙여 요청.
- *  - raw 주소가 실패하면 GitHub API로 한 번 더 시도.
+ *  - GitHub 캐시 회피: raw.githubusercontent.com은 쿼리(?t=)를 무시하고 최대 5분 캐시함.
+ *    → GitHub API로 main의 최신 커밋 SHA를 확인(캐시 없음)하고, 커밋 고정 주소(.../<SHA>/파일)로 받음.
+ *      커밋 주소는 내용이 바뀌지 않으므로 캐시돼도 항상 그 버전 → 올리자마자 반영.
+ *  - API는 비로그인 시 시간당 60회 제한 → SHA 확인은 SHA_CHECK_INTERVAL_MS마다 최대 1회.
+ *    한도 초과·실패 시 예전 방식(raw main)으로 대체.
  *  - 새 버전을 받으면 'uw-loader:updated' 이벤트를 보냄 → 알림 UI는 본체가 표시(본체와 함께 자동 업데이트됨).
  *    본체가 이벤트를 처리하지 않으면(구버전) 로더가 화면 위쪽에 직접 알림.
  *  - 평소엔 "새 버전 받음"과 "실패"만 알림. 매 페이지 상태까지 보려면
@@ -28,9 +31,14 @@
   // 진단 모드: 주소 끝에 #uwloader 를 붙여 열면 상세 상태를 화면에 표시
   const DEBUG = location.hash === '#uwloader'
     || (() => { try { return localStorage.getItem('uw-loader:debug') === '1'; } catch { return false; } })();
-  const LOADER_VERSION = '1.5.0';
+  const LOADER_VERSION = '1.6.0';
   const diag = [];
   const log = (m) => { diag.push(m); };
+  const API_SHA = 'https://api.github.com/repos/yusoo-dev/userscripts/commits/main';
+  const RAW_AT = (sha) => `https://raw.githubusercontent.com/yusoo-dev/userscripts/${sha}/humoruniv.user.js`;
+  const KEY_SHA = 'uw-loader:sha';
+  const KEY_SHA_AT = 'uw-loader:shaCheckedAt';
+  const SHA_CHECK_INTERVAL_MS = 20 * 1000;
   const SOURCES = [
     () => `https://raw.githubusercontent.com/yusoo-dev/userscripts/main/humoruniv.user.js?t=${Date.now()}`,
     () => `https://api.github.com/repos/yusoo-dev/userscripts/contents/humoruniv.user.js?ref=main&t=${Date.now()}`,
@@ -73,7 +81,33 @@
     else document.addEventListener('DOMContentLoaded', show, { once: true });
   }
 
+  // 최신 커밋 SHA로 받기. 변경 없으면 null(=받을 필요 없음), 확인 생략/실패 시 undefined(=대체 경로 사용)
+  async function fetchBySha() {
+    const lastAt = Number(store.get(KEY_SHA_AT)) || 0;
+    if (Date.now() - lastAt < SHA_CHECK_INTERVAL_MS) { log('[sha] 최근에 확인함 → 생략'); return null; }
+    store.set(KEY_SHA_AT, String(Date.now()));
+    try {
+      const r = await fetch(API_SHA, { cache: 'no-store', headers: { Accept: 'application/vnd.github.sha' } });
+      const sha = (await r.text()).trim();
+      log(`[sha] HTTP ${r.status} · ${sha.slice(0, 7)} · 남은 한도 ${r.headers.get('x-ratelimit-remaining')}`);
+      if (!r.ok || !/^[0-9a-f]{40}$/.test(sha)) return undefined;
+      if (sha === store.get(KEY_SHA) && store.get(KEY_CODE)) return null; // 변경 없음
+      const r2 = await fetch(RAW_AT(sha), { cache: 'no-store' });
+      const code = await r2.text();
+      log(`[sha] 본체 HTTP ${r2.status} · v${versionOf(code)}`);
+      if (!r2.ok || !/==UserScript==/.test(code)) return undefined;
+      store.set(KEY_SHA, sha);
+      return code;
+    } catch (e) {
+      log(`[sha] 실패 ${e && e.message}`);
+      return undefined;
+    }
+  }
+
   async function fetchLatest() {
+    const viaSha = await fetchBySha();
+    if (viaSha === null) return store.get(KEY_CODE); // 최신 그대로
+    if (viaSha) return viaSha;
     const errors = [];
     for (const [i, src] of SOURCES.entries()) {
       try {
