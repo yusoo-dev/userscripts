@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대 (자동 업데이트 로더)
 // @namespace    https://github.com/yusoo-dev/userscripts
-// @version      1.4.0
+// @version      1.5.0
 // @description  GitHub의 최신 웃대 스크립트를 받아 실행합니다. 한 번 설치하면 업데이트 확인이 필요 없습니다.
 // @match        *://*.humoruniv.com/*
 // @match        *://humoruniv.com/*
@@ -25,7 +25,12 @@
 (function () {
   'use strict';
 
-  const DEBUG = (() => { try { return localStorage.getItem('uw-loader:debug') === '1'; } catch { return false; } })();
+  // 진단 모드: 주소 끝에 #uwloader 를 붙여 열면 상세 상태를 화면에 표시
+  const DEBUG = location.hash === '#uwloader'
+    || (() => { try { return localStorage.getItem('uw-loader:debug') === '1'; } catch { return false; } })();
+  const LOADER_VERSION = '1.5.0';
+  const diag = [];
+  const log = (m) => { diag.push(m); };
   const SOURCES = [
     () => `https://raw.githubusercontent.com/yusoo-dev/userscripts/main/humoruniv.user.js?t=${Date.now()}`,
     () => `https://api.github.com/repos/yusoo-dev/userscripts/contents/humoruniv.user.js?ref=main&t=${Date.now()}`,
@@ -74,9 +79,11 @@
       try {
         const opts = { cache: 'no-store' };
         if (i === 1) opts.headers = { Accept: 'application/vnd.github.raw' };
-        const r = await fetch(src(), opts);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const url = src();
+        const r = await fetch(url, opts);
         const code = await r.text();
+        log(`[${i === 0 ? 'raw' : 'api'}] HTTP ${r.status} · v${versionOf(code)} · age=${r.headers.get('age')} · cache=${r.headers.get('x-cache')} · ${code.length}B`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         if (!/==UserScript==/.test(code)) throw new Error('잘못된 응답');
         return code;
       } catch (e) {
@@ -89,21 +96,42 @@
   const cached = store.get(KEY_CODE);
   const runningVer = cached ? versionOf(cached) : null;
   const ran = cached ? run(cached) : false;
+  log(`로더 v${LOADER_VERSION} · 저장된 본체 v${runningVer || '없음'} · 실행 ${ran ? '성공' : '안 함/실패'}`);
+
+  // 진단 결과 표시(DEBUG일 때)
+  function showDiag(extra) {
+    if (!DEBUG) return;
+    if (extra) log(extra);
+    const render = () => {
+      let box = document.getElementById('uw-loader-diag');
+      if (!box) {
+        box = document.createElement('pre');
+        box.id = 'uw-loader-diag';
+        box.style.cssText = ['position:fixed', 'left:8px', 'right:8px', 'top:52px', 'z-index:2147483647',
+          'margin:0', 'padding:10px', 'border-radius:8px', 'background:rgba(0,0,0,.92)', 'color:#7CFC9A',
+          'font:11px/1.5 monospace', 'white-space:pre-wrap', 'word-break:break-all']
+          .map((d) => d + ' !important').join(';');
+        box.onclick = () => box.remove();
+        document.body.appendChild(box);
+      }
+      box.textContent = diag.join('\n') + '\n(탭하면 닫기)';
+    };
+    if (document.body) render(); else document.addEventListener('DOMContentLoaded', render, { once: true });
+  }
 
   fetchLatest()
     .then((code) => {
       const latestVer = versionOf(code);
-      if (code === cached) {
-        if (DEBUG) toast(`로더: 최신 v${latestVer} 실행 중`);
-        return;
-      }
+      if (code === cached) { showDiag(`결과: 최신(v${latestVer})과 같음 → 변경 없음`); return; }
       const saved = store.set(KEY_CODE, code);
-      if (!ran) { run(code); if (DEBUG) toast(`로더: v${latestVer} 받아서 실행`); return; }
+      const verify = versionOf(store.get(KEY_CODE));
+      showDiag(`결과: v${latestVer} 저장 ${saved ? '성공' : '실패'} (다시 읽은 버전 v${verify})`);
+      if (!ran) { run(code); return; }
       if (!saved) { toast(`로더: v${latestVer} 저장 실패(저장공간 접근 불가)`); return; }
       // 본체가 알림을 띄우면 detail.handled = true
       const ev = new CustomEvent('uw-loader:updated', { detail: { version: latestVer, current: runningVer, handled: false } });
       window.dispatchEvent(ev);
       if (!ev.detail.handled) toast(`새 버전 v${latestVer} 받음 (현재 v${runningVer}) · 탭하면 바로 적용`, () => location.reload());
     })
-    .catch((e) => toast(`로더: 업데이트 확인 실패 · ${e.message}`));
+    .catch((e) => { showDiag(`결과: 실패 · ${e.message}`); toast(`로더: 업데이트 확인 실패 · ${e.message}`); });
 })();
