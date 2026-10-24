@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.34.6
-// @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글
+// @version      1.35.0
+// @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정
 // @match        *://*/*
 // @grant        none
 // @run-at       document-start
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.34.6';
+  const SCRIPT_VERSION = '1.35.0';
   const SHOW_VERSION = true;
 
   const params = new URLSearchParams(location.search);
@@ -87,6 +87,15 @@
     const style = document.createElement('style');
     style.textContent = `
       tr[height="128"] { height: initial !important; }
+
+      /* 불필요 요소 숨김 (구 "페이지 불필요 요소 숨기기" 스크립트 통합) */
+      #bannerList,
+      [style] ~ ul,
+      .notice,
+      #footer_wrap,
+      #bnb_wrap,
+      #bo_vc,
+      #bo_v_atc { display: none !important; }
 
       /* 상단 내비: 기존 높이(40px) 고정 + 원래 요소는 처음부터 숨김(교체 깜빡임 방지) */
       #navi > .flex-container {
@@ -1553,6 +1562,26 @@
   }
 
   /* ──────────────────────────────────────────────────────────
+   * 9-1. header-bar 보정 (구 "header-bar inert 제거 + z-index 설정" 스크립트 통합)
+   *  - #header-bar의 inert 속성 제거(터치·클릭 가능하게), z-index 9 고정.
+   *  - 사이트가 다시 inert/style을 바꾸면 즉시 되돌림(해당 속성 변경만 감시).
+   * ────────────────────────────────────────────────────────── */
+
+  function fixHeaderBar() {
+    const el = document.getElementById('header-bar');
+    if (!el) return;
+    if (el.hasAttribute('inert')) el.removeAttribute('inert');
+    if (el.style.zIndex !== '9') el.style.zIndex = '9';
+  }
+
+  function initHeaderBarFix() {
+    fixHeaderBar();
+    new MutationObserver(fixHeaderBar).observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true, attributeFilter: ['inert', 'style', 'id'],
+    });
+  }
+
+  /* ──────────────────────────────────────────────────────────
    * 10. 메인 루프 / 생명주기 (Lifecycle)
    * ────────────────────────────────────────────────────────── */
 
@@ -1615,6 +1644,7 @@
   initAutoUnmute();
   watchNavi();
   initLoadMore();
+  initHeaderBarFix();
   window.addEventListener('pageshow', (e) => {
     if (!document.body) return;
     refreshAllReadMarks();
