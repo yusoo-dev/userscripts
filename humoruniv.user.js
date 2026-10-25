@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.35.1
+// @version      1.35.2
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.35.1';
+  const SCRIPT_VERSION = '1.35.2';
   const SHOW_VERSION = true;
 
   const params = new URLSearchParams(location.search);
@@ -1505,6 +1505,33 @@
     }
   }
 
+  /* ── 이전글·다음글 블록 중복 정리 ──
+   *  글 페이지엔 같은 블록이 본문 아래·댓글 아래 2곳에 있음. 댓글이 없거나(숨김 포함) 짧아서
+   *  두 블록이 한 화면에 같이 보이면 위쪽 블록을 숨김. 댓글이 늘어나면 다시 표시.
+   *  위쪽 블록 바로 뒤에 높이 0 표식을 두고 "표식 ~ 아래 블록" 간격으로 판단 → 숨겨도 측정값이 같아 깜빡이지 않음.
+   */
+  const NAV_DUP_GAP_RATIO = 0.6; // 두 블록 사이 내용이 화면 높이의 60% 미만이면 위쪽 숨김
+
+  function dedupeNavBlocks() {
+    if (!isRead) return;
+    const blocks = [];
+    for (const li of document.querySelectorAll('li.next_prev_li')) {
+      const b = li.parentElement;
+      if (b && !blocks.includes(b)) blocks.push(b);
+    }
+    if (blocks.length < 2) return;
+    const [upper, lower] = blocks;
+    let mark = upper.nextElementSibling;
+    if (!mark || mark.tagName !== 'UW-MARK') {
+      mark = el('uw-mark', { display: 'block', height: '0', overflow: 'hidden' });
+      upper.after(mark);
+    }
+    const gap = lower.getBoundingClientRect().top - mark.getBoundingClientRect().top;
+    const hide = gap < window.innerHeight * NAV_DUP_GAP_RATIO;
+    if (hide) css(upper, { display: 'none' });
+    else upper.style.removeProperty('display');
+  }
+
   /* ──────────────────────────────────────────────────────────
    * 8. 더보기 자동 클릭 (Auto load-more)
    * ────────────────────────────────────────────────────────── */
@@ -1645,6 +1672,7 @@
     hookThumbs();
     injectNaviSearch();
     applyFilteredNav();
+    dedupeNavBlocks();
     if (!isList) return;
     scanPosts();
     tryClickLoadMore();
@@ -1682,6 +1710,7 @@
   watchNavi();
   initLoadMore();
   initHeaderBarFix();
+  window.addEventListener('resize', () => { if (document.body) dedupeNavBlocks(); }, { passive: true });
   initUpdateNotice();
   window.addEventListener('pageshow', (e) => {
     if (!document.body) return;
