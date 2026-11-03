@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.36.0
+// @version      1.36.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.36.0';
+  const SCRIPT_VERSION = '1.36.1';
   const SHOW_VERSION = false; // 버전 표시(디버그용)
 
   const params = new URLSearchParams(location.search);
@@ -121,6 +121,8 @@
 
       /* 차단한 작성자의 글 숨김(모든 게시판) */
       .post_item.uw-blocked { display: none !important; }
+      /* 차단 선택 모드: 글 행 강조 */
+      html.uw-picking .post_item { outline: 1px dashed rgba(255,90,90,.7) !important; outline-offset: -3px !important; }
 
       /* ㅇㅎ/ㅎㅂ 글 중 제목에 'ai' 포함: 숨기지 않고 흐리게 */
       .post_item.uw-ai-dim { opacity: 0.3 !important; }
@@ -260,7 +262,7 @@
       const blockBtn = navBtn(blockedNicks().size ? `차단 ${blockedNicks().size}` : '차단', '#', false);
       blockBtn.addEventListener('click', (e) => {
         e.preventDefault();
-        openBlockModal(blockBtn);
+        setBlockPick(!blockPick, blockBtn); // 차단 선택 모드 켜기/끄기
       });
       bar.appendChild(blockBtn);
     }
@@ -359,7 +361,7 @@
   }
 
   /* ── 작성자 차단 ──
-   *  [차단] 버튼 → 닉네임 입력(한 줄에 하나) → 확인 → 해당 작성자 글을 목록에서 숨김.
+   *  [차단] 버튼 → 목록의 글 선택 → 그 글 작성자 차단. (닉네임 직접 편집은 '목록 관리')
    *  모든 게시판에 공통 적용, 이 기기 브라우저에 저장(localStorage).
    *  필터/검색 기준 이전글·다음글에서도 제외됨.
    */
@@ -441,8 +443,7 @@
         saveBlockedNicks(ta.value.split(/[\n,]/));
         close();
         applyBlockedToRows();
-        const n = blockedNicks().size;
-        if (blockModal.btn) blockModal.btn.querySelector('span').textContent = n ? `차단 ${n}` : '차단';
+        if (blockModal.btn) { pickBtn = blockModal.btn; updateBlockBtnLabel(); }
       });
       blockModal = { backdrop, ta, btn: null };
     }
@@ -451,6 +452,68 @@
     css(blockModal.backdrop, { display: 'flex' });
     blockModal.ta.focus();
   }
+
+  /* ── 차단 선택 모드 ──
+   *  [차단] → 상단 안내 바 표시 → 목록의 글을 누르면 그 글 작성자 차단(확인 후) → 모드 종료.
+   *  안내 바: [목록 관리](닉네임 직접 편집/해제) [취소]
+   */
+  let blockPick = false;
+  let pickBar = null;
+  let pickBtn = null;
+
+  function updateBlockBtnLabel() {
+    const n = blockedNicks().size;
+    const span = pickBtn?.querySelector('span');
+    if (span) span.textContent = n ? `차단 ${n}` : '차단';
+  }
+
+  function setBlockPick(on, btn) {
+    if (btn) pickBtn = btn;
+    blockPick = on;
+    document.documentElement.classList.toggle('uw-picking', on);
+    pickBtn?.querySelector('span')?.classList.toggle('uw-qs-on', on);
+    if (!on) { pickBar?.remove(); pickBar = null; return; }
+
+    pickBar = el('uw-pickbar', {
+      display: 'flex', 'align-items': 'center', gap: '8px', position: 'fixed', left: '8px', right: '8px',
+      top: '46px', 'z-index': '2147483000', padding: '8px 10px', 'border-radius': '10px',
+      background: 'rgba(40,40,40,.97)', 'box-shadow': '0 4px 16px rgba(0,0,0,.45)',
+    });
+    const msg = el('span', { display: 'block', flex: '1 1 auto', color: '#eee', 'font-size': '13px' });
+    msg.textContent = '차단할 작성자의 글을 누르세요';
+    const mk = (label, bg) => {
+      const b = el('button', {
+        display: 'block', flex: 'none', height: '30px', padding: '0 10px', 'border-radius': '6px',
+        background: bg, color: '#fff', 'font-size': '12px', 'font-weight': 'bold', cursor: 'pointer',
+      });
+      b.type = 'button'; b.textContent = label;
+      return b;
+    };
+    const manage = mk('목록 관리', '#555');
+    const cancel = mk('취소', '#777');
+    manage.addEventListener('click', () => { setBlockPick(false); openBlockModal(pickBtn); });
+    cancel.addEventListener('click', () => setBlockPick(false));
+    pickBar.append(msg, manage, cancel);
+    document.body.appendChild(pickBar);
+  }
+
+  // 선택 모드에서 글 클릭 가로채기(글로 이동하지 않음)
+  function onPickClick(e) {
+    if (!blockPick) return;
+    const row = e.target instanceof Element ? e.target.closest('.post_item') : null;
+    if (!row) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    const nick = rowNick(row);
+    if (!nick) { alert('이 글의 작성자 닉네임을 찾지 못했어요.'); return; }
+    if (!confirm(`'${nick}' 님의 글을 모두 숨길까요?`)) return;
+    saveBlockedNicks([...blockedNicks(), nick]);
+    applyBlockedToRows();
+    updateBlockBtnLabel();
+    setBlockPick(false);
+  }
+  document.addEventListener('click', onPickClick, true);
 
   // 목록의 모든 글에 차단 여부 반영(설정 변경 직후·새 글 로드 시)
   function applyBlockedToRows() {
