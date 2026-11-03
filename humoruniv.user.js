@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.35.2
-// @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정
+// @version      1.36.0
+// @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
 // @run-at       document-start
@@ -66,8 +66,8 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.35.2';
-  const SHOW_VERSION = true;
+  const SCRIPT_VERSION = '1.36.0';
+  const SHOW_VERSION = false; // 버전 표시(디버그용)
 
   const params = new URLSearchParams(location.search);
   const table = params.get('table') || '';
@@ -118,6 +118,9 @@
 
       /* 필터 통과(uw-ok) 전까지 행 전체 숨김 → 탈락 글 깜빡임·갭 방지 */
       html.uw-filtering .post_item:not(.uw-ok) { display: none !important; }
+
+      /* 차단한 작성자의 글 숨김(모든 게시판) */
+      .post_item.uw-blocked { display: none !important; }
 
       /* ㅇㅎ/ㅎㅂ 글 중 제목에 'ai' 포함: 숨기지 않고 흐리게 */
       .post_item.uw-ai-dim { opacity: 0.3 !important; }
@@ -252,6 +255,16 @@
     });
     bar.appendChild(searchBtn);
 
+    // 목록 화면: 작성자 차단 설정
+    if (isList) {
+      const blockBtn = navBtn(blockedNicks().size ? `차단 ${blockedNicks().size}` : '차단', '#', false);
+      blockBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        openBlockModal(blockBtn);
+      });
+      bar.appendChild(blockBtn);
+    }
+
     if (SHOW_VERSION) {
       const ver = el('uw-ver', {
         display: 'block', 'margin-left': 'auto', 'flex-shrink': '0', padding: '0 2px',
@@ -343,6 +356,108 @@
     css(searchModal.backdrop, { display: 'none' });
     searchModal.input.blur();
     if (!fromPopState && history.state?.uwSearch) history.back();
+  }
+
+  /* ── 작성자 차단 ──
+   *  [차단] 버튼 → 닉네임 입력(한 줄에 하나) → 확인 → 해당 작성자 글을 목록에서 숨김.
+   *  모든 게시판에 공통 적용, 이 기기 브라우저에 저장(localStorage).
+   *  필터/검색 기준 이전글·다음글에서도 제외됨.
+   */
+  const BLOCK_KEY = 'uw-blocked-nicks';
+  let blockedCache = null;
+
+  function blockedNicks() {
+    if (!blockedCache) {
+      let arr = [];
+      try { arr = JSON.parse(localStorage.getItem(BLOCK_KEY) || '[]'); } catch {}
+      blockedCache = new Set(arr.map((n) => String(n).trim()).filter(Boolean));
+    }
+    return blockedCache;
+  }
+
+  function saveBlockedNicks(list) {
+    const uniq = [...new Set(list.map((n) => n.trim()).filter(Boolean))];
+    try { localStorage.setItem(BLOCK_KEY, JSON.stringify(uniq)); } catch {}
+    blockedCache = new Set(uniq);
+  }
+
+  function rowNick(el) {
+    for (const sel of ['.hu_nick_txt', '.nick', '[class*="nick"]']) { // 우선순위 순서대로
+      const t = el.querySelector(sel)?.textContent.trim();
+      if (t) return t;
+    }
+    return '';
+  }
+
+  function isBlockedRow(el) {
+    const set = blockedNicks();
+    return set.size > 0 && set.has(rowNick(el));
+  }
+
+  let blockModal = null;
+
+  function openBlockModal(btn) {
+    if (!blockModal) {
+      const backdrop = el('uw-block', {
+        display: 'none', position: 'fixed', inset: '0', 'z-index': '2147483000',
+        background: 'rgba(0,0,0,.6)', 'align-items': 'flex-start', 'justify-content': 'center',
+        'padding-top': '14vh',
+      });
+      const box = el('div', {
+        display: 'flex', 'flex-direction': 'column', gap: '8px', width: 'min(92vw, 420px)',
+        padding: '12px', background: '#2a2a2a', 'border-radius': '12px',
+        'box-shadow': '0 8px 30px rgba(0,0,0,.5)',
+      });
+      const title = el('div', { display: 'block', color: '#eee', 'font-size': '15px', 'font-weight': 'bold' });
+      title.textContent = '작성자 차단';
+      const hint = el('div', { display: 'block', color: '#999', 'font-size': '12px', 'line-height': '1.4' });
+      hint.textContent = '닉네임을 한 줄에 하나씩 입력하세요. 목록에서 해당 작성자의 글이 숨겨집니다.';
+      const ta = el('textarea', {
+        display: 'block', width: '100%', height: '160px', padding: '8px 10px',
+        'border-radius': '8px', border: '1px solid #555', background: '#1b1b1b',
+        color: '#eee', 'font-size': '16px', 'line-height': '1.5', outline: 'none', resize: 'vertical',
+      });
+      ta.placeholder = '닉네임1\n닉네임2';
+      const row = el('div', { display: 'flex', gap: '8px' });
+      const mk = (label, bg) => {
+        const b = el('button', {
+          display: 'block', flex: '1 1 auto', height: '42px', 'border-radius': '8px',
+          background: bg, color: '#fff', 'font-size': '15px', 'font-weight': 'bold', cursor: 'pointer',
+        });
+        b.type = 'button'; b.textContent = label;
+        return b;
+      };
+      const cancel = mk('취소', '#555');
+      const ok = mk('확인', '#ff5a5a');
+      row.append(cancel, ok);
+      box.append(title, hint, ta, row);
+      backdrop.appendChild(box);
+      document.body.appendChild(backdrop);
+
+      const close = () => { css(backdrop, { display: 'none' }); ta.blur(); };
+      cancel.addEventListener('click', close);
+      backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+      ok.addEventListener('click', () => {
+        saveBlockedNicks(ta.value.split(/[\n,]/));
+        close();
+        applyBlockedToRows();
+        const n = blockedNicks().size;
+        if (blockModal.btn) blockModal.btn.querySelector('span').textContent = n ? `차단 ${n}` : '차단';
+      });
+      blockModal = { backdrop, ta, btn: null };
+    }
+    blockModal.btn = btn;
+    blockModal.ta.value = [...blockedNicks()].join('\n');
+    css(blockModal.backdrop, { display: 'flex' });
+    blockModal.ta.focus();
+  }
+
+  // 목록의 모든 글에 차단 여부 반영(설정 변경 직후·새 글 로드 시)
+  function applyBlockedToRows() {
+    for (const el of document.querySelectorAll('.post_item')) {
+      el.classList.toggle('uw-blocked', isBlockedRow(el));
+    }
+    scheduleSaveNavList();
   }
 
   /* ──────────────────────────────────────────────────────────
@@ -1280,6 +1395,10 @@
         const okEl = el.querySelector('.ok_num');
         if (okEl) { el.dataset.uwfiltered = '1'; classifyFilter(el, okEl); }
       }
+      if (el.dataset.uwblk !== '1') {
+        el.dataset.uwblk = '1';
+        if (isBlockedRow(el)) el.classList.add('uw-blocked');
+      }
     }
     scheduleSaveNavList();
   }
@@ -1337,6 +1456,7 @@
 
   // 필터 통과 여부(현재 페이지·불러온 페이지 공통)
   function rowPasses(el) {
+    if (el.classList.contains('uw-blocked') || isBlockedRow(el)) return false;
     if (!filterRule) return true;
     if (el.classList.contains('uw-ok')) return true;
     if (el.dataset.uwfiltered === '1') return false;
@@ -1376,7 +1496,7 @@
   function saveNavList() {
     if (!isList) return;
     const searching = /[?&]sk=[^&]/.test(location.search);
-    if (!filterRule && !searching) {               // 필터도 검색도 아니면 사이트 기본 순서와 같음
+    if (!filterRule && !searching && blockedNicks().size === 0) { // 필터·검색·차단 모두 없으면 사이트 기본 순서와 같음
       try { sessionStorage.removeItem(NAV_KEY(table)); } catch {}
       return;
     }
@@ -1609,40 +1729,30 @@
   }
 
   /* ──────────────────────────────────────────────────────────
-   * 9-2. 새 버전 알림 (로더 사용 시)
-   *  - 로더가 새 버전을 받아 저장하면 'uw-loader:updated' 이벤트 → 상단 메뉴 바로 아래 알림.
-   *  - 이미 저장돼 있는데 아직 적용 안 된 경우(이전 페이지에서 받음)도 페이지 열 때 알림.
-   *  - 알림을 탭하면 새로고침해서 즉시 적용.
+   * 9-2. 새 버전 자동 적용 (로더 사용 시, 알림 없음)
+   *  - 로더가 새 버전을 받아 저장하면 'uw-loader:updated' 이벤트가 옴.
+   *  - 페이지를 연 직후(AUTO_RELOAD_WINDOW_MS 이내)이고 아직 조작 전이면 조용히 새로고침해서 즉시 적용.
+   *  - 이미 보고 있는 중이면 방해하지 않고 다음 페이지부터 자동 적용(로더가 저장해 둔 최신 코드로 실행).
+   *  - 같은 버전으로 두 번 새로고침하지 않음(무한 새로고침 방지).
    * ────────────────────────────────────────────────────────── */
 
-  const versionOfCode = (code) => (String(code || '').match(/@version\s+([\w.\-]+)/) || [])[1] || '';
-
-  function showUpdateBanner(ver) {
-    const show = () => {
-      if (!document.body || document.querySelector('uw-update')) return;
-      const b = el('uw-update', {
-        display: 'block', position: 'fixed', left: '50%', top: '48px', transform: 'translateX(-50%)',
-        'z-index': '2147483645', padding: '8px 14px', 'border-radius': '18px',
-        background: '#ff5a5a', color: '#fff', 'font-size': '13px', 'font-weight': 'bold',
-        'white-space': 'nowrap', 'box-shadow': '0 4px 14px rgba(0,0,0,.4)', cursor: 'pointer',
-      });
-      b.textContent = `새 버전 v${ver} · 탭하여 적용`;
-      b.addEventListener('click', () => location.reload());
-      document.body.appendChild(b);
-      setTimeout(() => b.remove(), 10000);
-    };
-    if (document.body) show(); else document.addEventListener('DOMContentLoaded', show, { once: true });
-  }
+  const AUTO_RELOAD_WINDOW_MS = 2500;
 
   function initUpdateNotice() {
+    let touched = false;
+    const mark = () => { touched = true; };
+    for (const t of ['pointerdown', 'keydown']) window.addEventListener(t, mark, { capture: true, passive: true, once: true });
+    window.addEventListener('scroll', () => { if (window.scrollY > 80) touched = true; }, { passive: true });
+
     window.addEventListener('uw-loader:updated', (e) => {
-      if (e.detail) e.detail.handled = true;
-      showUpdateBanner(e.detail?.version || '');
+      if (e.detail) e.detail.handled = true; // 로더 자체 알림 끄기
+      const ver = e.detail?.version || '';
+      let last = '';
+      try { last = sessionStorage.getItem('uw-auto-reloaded') || ''; } catch {}
+      if (touched || last === ver || performance.now() > AUTO_RELOAD_WINDOW_MS) return; // 다음 페이지부터 적용
+      try { sessionStorage.setItem('uw-auto-reloaded', ver); } catch {}
+      location.reload();
     });
-    let stored = null;
-    try { stored = localStorage.getItem('uw-loader:code'); } catch {}
-    const v = versionOfCode(stored);
-    if (v && v !== SCRIPT_VERSION) showUpdateBanner(v);
   }
 
   /* ──────────────────────────────────────────────────────────
