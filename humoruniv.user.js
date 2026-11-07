@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.36.2
+// @version      1.36.3
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.36.2';
+  const SCRIPT_VERSION = '1.36.3';
   const SHOW_VERSION = false; // 버전 표시(디버그용)
 
   const params = new URLSearchParams(location.search);
@@ -930,6 +930,7 @@
    * ────────────────────────────────────────────────────────── */
 
   const MINI_HIDE_MAX_SEC = 5;  // 이 길이(초) 이하 영상은 컨트롤 바 전체 숨김(짧은 움짤형 영상)
+  const MINI_SHORT_GAP = 10;    // px. 컨트롤을 숨긴 영상 아래 남길 간격
   const MINI_BAR_HEIGHT = 44;   // px. 터치 영역 높이(재생바 위아래로 넉넉히)
   const MINI_TRACK_HEIGHT = 5;  // px. 보이는 재생바 두께
   const MINI_KNOB_SIZE = 12;    // px. 재생 위치 손잡이
@@ -1092,8 +1093,13 @@
     const applyShortHide = () => {
       const d = v.duration;
       if (!(d > 0) || !Number.isFinite(d)) return;
-      if (d <= MINI_HIDE_MAX_SEC) css(bar, { display: 'none' });
-      else bar.style.setProperty('display', 'flex', 'important');
+      const short = d <= MINI_HIDE_MAX_SEC;
+      // 숨길 때도 바 자리는 MINI_SHORT_GAP 높이로 남겨 아래 텍스트와 간격 유지(내용물만 숨김)
+      css(bar, { height: `${short ? MINI_SHORT_GAP : MINI_BAR_HEIGHT}px` });
+      for (const child of bar.children) {
+        if (short) css(child, { display: 'none' });
+        else child.style.setProperty('display', child === seekArea || child === sound ? 'flex' : 'block', 'important');
+      }
     };
     v.addEventListener('loadedmetadata', applyShortHide);
     v.addEventListener('durationchange', applyShortHide);
