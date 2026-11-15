@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.37.0
+// @version      1.37.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -47,10 +47,10 @@
   // 상단 내비 게시판 버튼(순서대로). 현재 게시판 버튼은 숨김.
   //   table 값은 각 게시판 목록 URL의 table= 값.
   const NAVI_BOARDS = [
-    { label: '웃긴자료', table: 'pds' },
-    { label: '대기자료', table: 'pdswait' },
-    { label: '얼굴인식', table: 'face' },
-    { label: '패션', table: 'fashion' },
+    { label: '웃자', name: '웃긴자료', table: 'pds' },
+    { label: '대자', name: '대기자료', table: 'pdswait' },
+    { label: '얼인', name: '얼굴인식', table: 'face' },
+    { label: '패션', name: '패션', table: 'fashion' },
   ];
 
   const USER_PLAY_WINDOW_MS = 1500; // 영상 조작 후 이 시간 내 play는 사용자 재생으로 간주
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.37.0';
+  const SCRIPT_VERSION = '1.37.1';
   const SHOW_VERSION = false; // 버전 표시(디버그용)
 
   const params = new URLSearchParams(location.search);
@@ -391,7 +391,7 @@
     blockedCache = new Set(uniq);
   }
 
-  const boardLabel = () => NAVI_BOARDS.find((b) => b.table === table)?.label || '이 게시판';
+  const boardLabel = () => NAVI_BOARDS.find((b) => b.table === table)?.name || '이 게시판';
 
   function rowNick(el) {
     for (const sel of ['.hu_nick_txt', '.nick', '[class*="nick"]']) { // 우선순위 순서대로
