@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.38.4
+// @version      1.38.5
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.38.4';
+  const SCRIPT_VERSION = '1.38.5';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -119,6 +119,9 @@
       /* 필터 통과(uw-ok) 전까지 행 전체 숨김 → 탈락 글 깜빡임·갭 방지 */
       html.uw-filtering .post_item:not(.uw-ok) { display: none !important; }
 
+      /* 베스트 탭 줄(오늘의/주간/월간/연간/추천수 500) — 목록·글 화면 모두 숨김 */
+      #list_top { display: none !important; }
+
       /* 차단한 작성자의 글 숨김(게시판별 목록) */
       .post_item.uw-blocked { display: none !important; }
       /* 차단 선택 모드: 글 행 강조 */
@@ -128,7 +131,6 @@
       .post_item.uw-ai-dim { opacity: 0.3 !important; }
 
       /* 상세(read) 페이지: 하단 목록 네비/컨테이너/더보기 숨김 (목록 페이지엔 영향 없음) */
-      html.uw-read #list_top,
       html.uw-read #list_container_navi,
       html.uw-read #list_container,
       html.uw-read #btn_load_more_div { display: none !important; }
@@ -1792,20 +1794,20 @@
     }
   }
 
-  /* ── 글 화면: "OO 오늘의 베스트" 순위 박스 숨김 ──
-   *  구조(id/class)를 모르는 영역이라 글자로 찾는다: "…오늘의 베스트" 제목 요소에서 위로 올라가며
-   *  순위 링크(read.html)가 3개 이상 들어 있는 가장 가까운 상자를 숨김.
-   *  본문·이전글/다음글·댓글이 들어 있는 상자에 닿으면 멈춤(오삭제 방지).
+  /* ── 베스트 영역 숨김 (목록·글 화면 공통) ──
+   *  1) "오늘의 베스트 / 주간 베스트 …" 탭 줄: #list_top(CSS) + 다른 이름일 때 대비해 글자로도 찾음
+   *  2) "OO 오늘의 베스트" 제목과 그 아래 순위(1~5위) 상자
+   *  구조(id/class)를 모르는 영역은 글자로 찾고, 게시글 목록(.post_item)·본문·이전글/다음글·댓글·영상이
+   *  들어 있는 상자에는 절대 손대지 않음(오삭제 방지).
    */
-  // 글 화면: "오늘의 베스트 / 주간 베스트 …" 탭 버튼 줄도 숨김(#list_top이 아닌 다른 이름일 수 있어 글자로 찾음)
-  function hideBestTabsOnRead() {
-    if (!isRead || document.documentElement.dataset.uwTabsHidden) return;
-    const SAFE = '.wrap_body, li.next_prev_li, #comment, video, uw-navi';
+  const BEST_SAFE = '.post_item, .wrap_body, li.next_prev_li, #comment, video, uw-navi, #list_container';
+
+  function hideBestTabs() {
+    if (document.documentElement.dataset.uwTabsHidden) return;
     for (const a of document.querySelectorAll('a')) {
       if (a.closest('uw-navi') || !/주간\s*베스트/.test(a.textContent)) continue;
-      // 주간 베스트 링크에서 위로: "오늘의 베스트"도 함께 들어 있는 가장 가까운 상자
       for (let e = a.parentElement; e && e !== document.body; e = e.parentElement) {
-        if (e.querySelector(SAFE)) break;
+        if (e.querySelector(BEST_SAFE)) break;
         if (/오늘의\s*베스트/.test(e.textContent)) {
           css(e, { display: 'none' });
           document.documentElement.dataset.uwTabsHidden = '1';
@@ -1815,27 +1817,36 @@
     }
   }
 
-  function hideTodayBestOnRead() {
-    hideBestTabsOnRead();
-    if (!isRead || document.documentElement.dataset.uwBestHidden) return;
-    const SAFE = '.wrap_body, li.next_prev_li, #comment, video';
+  function hideTodayBest() {
+    if (document.documentElement.dataset.uwBestHidden) return;
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const t = walker.currentNode.data.trim();
-      if (!/오늘의 베스트$/.test(t) || t.length > 20) continue;
+      if (!/오늘의\s*베스트$/.test(t) || t.length > 20) continue;
       const head = walker.currentNode.parentElement;
-      if (!head || head.closest('uw-navi, a')) continue; // 메뉴·버튼 속 글자는 제외
-      let box = null;
+      if (!head || head.closest('uw-navi, a')) continue; // 메뉴·버튼 속 글자 제외
+      // 제목에서 위로: 순위 링크 3개 이상 든 상자(제목+순위) → 그 상자 숨김.
+      // 게시글 목록 등 보호 대상에 닿으면 멈추고, 그 직전 상자(=제목 줄)만 숨김.
+      let target = head;
       for (let e = head; e && e !== document.body; e = e.parentElement) {
-        if (e.querySelector(SAFE)) break;
-        if (e.querySelectorAll('a[href*="read.html"]').length >= 3) { box = e; break; }
+        if (e.querySelector(BEST_SAFE)) break;
+        target = e;
+        if (e.querySelectorAll('a[href*="read.html"]').length >= 3) break;
       }
-      if (box) {
-        css(box, { display: 'none' });
-        document.documentElement.dataset.uwBestHidden = '1';
-        return;
+      css(target, { display: 'none' });
+      // 순위 상자가 제목과 형제로 따로 있는 경우: 바로 다음 형제가 순위 링크만 가진 상자면 함께 숨김
+      const next = target.nextElementSibling;
+      if (next && !next.querySelector(BEST_SAFE) && next.querySelectorAll('a[href*="read.html"]').length >= 3) {
+        css(next, { display: 'none' });
       }
+      document.documentElement.dataset.uwBestHidden = '1';
+      return;
     }
+  }
+
+  function hideBestAreas() {
+    hideBestTabs();
+    hideTodayBest();
   }
 
   /* ── 이전글·다음글 블록 중복 정리 ──
@@ -1996,7 +2007,7 @@
     injectNaviSearch();
     applyFilteredNav();
     dedupeNavBlocks();
-    hideTodayBestOnRead();
+    hideBestAreas();
     if (!isList) return;
     scanPosts();
     tryClickLoadMore();
