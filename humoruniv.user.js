@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.39.5
+// @version      1.40.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.39.5';
+  const SCRIPT_VERSION = '1.40.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -1631,12 +1631,25 @@
   }
 
   // OK(추천) 수 기준 필터: 통과한 글에만 uw-ok 부여(스타일로 노출)
+  // 특정 검색에서 제목에 'ai'가 든 글을 아예 숨김(흐리게가 아니라 제외). 대상: 대기자료 'ㅎㅂ' 검색.
+  //   검색어는 EUC-KR 인코딩 값으로 비교(주소의 sk 값 그대로). 다른 검색어 추가 시 여기에.
+  const HIDE_AI_SEARCHES = [{ table: 'pdswait', sk: '%A4%BE%A4%B2' }]; // ㅎㅂ
+  function hideAiFor(url) {
+    const u = String(url || '');
+    const t = (u.match(/[?&]table=([^&#]*)/) || [])[1];
+    const sk = ((u.match(/[?&]sk=([^&#]*)/) || [])[1] || '').toUpperCase();
+    return HIDE_AI_SEARCHES.some((h) => h.table === t && h.sk.toUpperCase() === sk);
+  }
+  const HIDE_AI_HERE = isList && hideAiFor(location.href);
+  const hasAi = (title) => /ai/i.test(title);
+
   function classifyFilter(el, okEl) {
     const ok = countDigits(okEl.textContent);
     const title = el.querySelector('.link_hover')?.textContent || '';
+    if (HIDE_AI_HERE && hasAi(title)) return; // uw-ok 미부여 → 숨김
     const matchedExempt = filterRule.exemptKeywords.some(k => title.includes(k));
     if (matchedExempt || ok > filterRule.threshold) el.classList.add('uw-ok');
-    if (matchedExempt && /ai/i.test(title)) el.classList.add('uw-ai-dim');
+    if (matchedExempt && hasAi(title)) el.classList.add('uw-ai-dim');
   }
 
   // 게시글 단일 패스: 신규 글 읽음 표시·카운트 + OK 필터 분류.
@@ -1712,8 +1725,10 @@
   }
 
   // 필터 통과 여부(현재 페이지·불러온 페이지 공통)
-  function rowPasses(el) {
+  // hideAi: 이 목록이 'ai 제목 숨김' 검색인지(현재 페이지·불러온 페이지 모두 목록 주소 기준으로 판단)
+  function rowPasses(el, hideAi = false) {
     if (el.classList.contains('uw-blocked') || isBlockedRow(el)) return false;
+    if (hideAi && hasAi(rowTitle(el))) return false;
     if (!filterRule) return true;
     if (el.classList.contains('uw-ok')) return true;
     if (el.dataset.uwfiltered === '1') return false;
@@ -1740,10 +1755,10 @@
     };
   }
 
-  function rowsToItems(root, baseUrl) {
+  function rowsToItems(root, baseUrl, hideAi = false) {
     const items = [];
     for (const el of root.querySelectorAll('.post_item')) {
-      if (!rowPasses(el)) continue;
+      if (!rowPasses(el, hideAi)) continue;
       const it = rowToItem(el, baseUrl);
       if (it) items.push(it);
     }
@@ -1767,7 +1782,7 @@
       const nextSpan = parseInt(document.getElementById('list_container_next_page_span')?.textContent || '', 10);
       if (Number.isFinite(nextSpan) && nextSpan > firstPg) lastPg = nextSpan - 1;
     }
-    const items = rowsToItems(document, location.href);
+    const items = rowsToItems(document, location.href, HIDE_AI_HERE);
     saveNavCtx({ at: Date.now(), listUrl, firstPg, lastPg, pageLinks, items });
   }
 
@@ -1789,7 +1804,7 @@
     const doc = new DOMParser().parseFromString(html, 'text/html');
     if (!doc.querySelector('.post_item')) return null;
     ctx.pageLinks = { ...collectPageLinks(doc, url), ...(ctx.pageLinks || {}) }; // 다음 페이지 링크 누적
-    return rowsToItems(doc, url);
+    return rowsToItems(doc, url, hideAiFor(ctx.listUrl));
   }
 
   // dir=+1: 다음 페이지(더 오래된 글)를 뒤에, dir=-1: 이전 페이지(더 최신 글)를 앞에 붙임
