@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.40.0
+// @version      1.40.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.40.0';
+  const SCRIPT_VERSION = '1.40.1';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -883,6 +883,8 @@
 
   function onAnyPlay(e) {
     const v = e.target;
+    // 화면을 보고 있지 않을 때 시작된 재생(사이트 자동재생 등)은 즉시 멈춤
+    if (v instanceof HTMLVideoElement && (document.hidden || pageInactive)) { v.pause(); return; }
     if (!(v instanceof HTMLVideoElement) || v === activeVideo) return;
 
     // 화면 밖 영상의 자동재생(사이트 autoplay 잔여 등)은 차단
@@ -1431,8 +1433,41 @@
 
   // 자동재생: 단일 재생 규칙에서 "의도된 재생"으로 인정되도록 표시 후 재생.
   //   소리 켠 상태로 차단되면 음소거로 재생(자동재생 정책).
+  /* ── 화면을 보고 있지 않을 때 일시정지 ──
+   *  다른 탭·앱 전환, 브라우저 내리기, 화면 꺼짐(visibilitychange/pagehide), 창 포커스 아웃(blur) 시
+   *  재생 중인 영상 전부 일시정지. 그동안은 자동재생·재생 복구도 하지 않음.
+   *  다시 돌아오면 화면 노출 기준으로 자동재생 재개(사용자가 직접 멈춘 영상은 그대로).
+   */
+  let pageInactive = false;
+
+  function pauseAllForInactive() {
+    pageInactive = true;
+    for (const v of allVideos()) if (!v.paused) v.pause();
+  }
+
+  function initInactivePause() {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) pauseAllForInactive();
+      else { pageInactive = false; scheduleEvaluate(); }
+    });
+    window.addEventListener('pagehide', pauseAllForInactive);
+    window.addEventListener('blur', () => {
+      // 페이지 안 iframe으로 포커스가 옮겨간 경우는 제외
+      if (document.activeElement instanceof HTMLIFrameElement) return;
+      pauseAllForInactive();
+    });
+    window.addEventListener('focus', () => {
+      if (document.hidden) return;
+      pageInactive = false;
+      scheduleEvaluate();
+    });
+    // 화면을 터치했다면 보고 있는 것(포커스 이벤트가 안 오는 모바일 대비)
+    window.addEventListener('pointerdown', () => { if (!document.hidden) pageInactive = false; }, { capture: true, passive: true });
+  }
+
   function autoPlay(v) {
     if (!v || !v.paused || userPausedVideos.has(v) || document.fullscreenElement) return;
+    if (pageInactive || document.hidden) return; // 화면을 보고 있지 않으면 재생 안 함
     markInteract(v);
     v.play().catch(() => {
       if (!v.muted) {
@@ -1445,7 +1480,7 @@
   }
 
   function evaluatePlayback() {
-    if (document.fullscreenElement) return;
+    if (document.fullscreenElement || pageInactive || document.hidden) return;
     const cur = isActivePlaying() ? activeVideo : null;
     const curCov = cur ? cov(cur) : 0;
 
@@ -2174,6 +2209,7 @@
   watchNavi();
   initLoadMore();
   initHeaderBarFix();
+  initInactivePause();
   recordLastRead();
   window.addEventListener('resize', () => { if (document.body) dedupeNavBlocks(); }, { passive: true });
   initUpdateNotice();
