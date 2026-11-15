@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.39.1
+// @version      1.39.2
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.39.1';
+  const SCRIPT_VERSION = '1.39.2';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -632,11 +632,52 @@
     });
     form.parentNode.insertBefore(el('uw-formhome', { display: 'none' }), form); // 원래 자리 표시
     searchPanel.appendChild(form);
-    css(form, { display: 'flex', 'flex-wrap': 'wrap', 'align-items': 'center', gap: '6px', margin: '0' });
+    restyleSearchForm(form);
     const sk = form.querySelector('input[name="sk"]');
-    if (sk) css(sk, { flex: '1 1 120px', 'min-width': '0', 'font-size': '16px' }); // 16px: iOS 확대 방지
     document.body.appendChild(searchPanel);
     sk?.focus();
+  }
+
+  // 옮겨 온 사이트 폼을 한 줄로 정돈: [검색대상▾][기간▾][입력][검색]
+  //  - 입력 요소를 감싼 상자는 펼쳐서(display:contents) 입력 요소만 한 줄에 나란히
+  //  - 입력 요소가 없는 상자·글자(안내문, 빈칸 등)는 숨김 → 사이 빈 공간 제거
+  //  - 높이·색·테두리를 통일(사이트 기본 스타일의 두꺼운 흰 테두리 제거)
+  function restyleSearchForm(form) {
+    const CTRL = 'select, input:not([type="hidden"]), button, .btn';
+    const isCtrl = (e) => e.matches(CTRL);
+    // 검색과 무관한 버튼(글쓰기 등)은 숨김
+    for (const b of form.querySelectorAll('.btn, button, a')) {
+      if (/글쓰기/.test(b.textContent)) css(b.closest('a') || b, { display: 'none' });
+    }
+    css(form, { display: 'flex', 'flex-wrap': 'nowrap', 'align-items': 'center', gap: '6px', margin: '0', padding: '0' });
+    for (const e of [...form.querySelectorAll('*')]) {
+      if (e.style.getPropertyValue('display') === 'none') continue;             // 위에서 숨긴 것
+      if (isCtrl(e) || (e.closest('.btn, button') && e.closest('.btn, button') !== e)) continue; // 버튼 안쪽 글자 등
+      if (e.querySelector(CTRL)) css(e, { display: 'contents' });
+      else if (!(e instanceof HTMLInputElement)) css(e, { display: 'none' });
+    }
+    // 빈칸 글자(&nbsp; 등)는 펼친 상자 안에서 한 칸씩 자리를 차지하므로 비움
+    const tw = document.createTreeWalker(form, NodeFilter.SHOW_TEXT);
+    const blanks = [];
+    while (tw.nextNode()) if (/^[\s\u00a0]*$/.test(tw.currentNode.data)) blanks.push(tw.currentNode);
+    for (const n of blanks) n.data = '';
+    const base = {
+      height: '36px', 'box-sizing': 'border-box', margin: '0', 'border-radius': '6px',
+      'font-size': '14px', 'line-height': '34px', outline: 'none', 'box-shadow': 'none',
+    };
+    for (const sel of form.querySelectorAll('select')) {
+      css(sel, { ...base, display: 'block', flex: '0 1 auto', 'max-width': '30%', padding: '0 4px',
+        background: '#1b1b1b', color: '#eee', border: '1px solid #555' });
+    }
+    for (const inp of form.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"])')) {
+      css(inp, { ...base, display: 'block', flex: '1 1 80px', 'min-width': '0', width: 'auto', padding: '0 10px',
+        background: '#1b1b1b', color: '#eee', border: '1px solid #555', 'font-size': '16px' }); // 16px: iOS 확대 방지
+    }
+    for (const b of form.querySelectorAll('button, input[type="submit"], input[type="button"], .btn')) {
+      if (b.style.getPropertyValue('display') === 'none' || b.closest('[style*="display: none"]')) continue;
+      css(b, { ...base, display: 'inline-flex', 'align-items': 'center', 'justify-content': 'center', flex: 'none',
+        padding: '0 12px', background: '#ff5a5a', color: '#fff', border: '0', 'font-weight': 'bold', cursor: 'pointer' });
+    }
   }
 
   function injectSearchFab() {
