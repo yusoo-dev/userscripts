@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.37.1
+// @version      1.38.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.37.1';
+  const SCRIPT_VERSION = '1.38.0';
   const SHOW_VERSION = false; // 버전 표시(디버그용)
 
   const params = new URLSearchParams(location.search);
@@ -236,6 +236,14 @@
         '<rect x="3" y="16" width="3" height="3" rx="1"/><rect x="8" y="16.5" width="13" height="2" rx="1"/></svg>';
       bar.appendChild(home);
     }
+
+    // 최근: 웃긴자료에서 마지막으로 읽은 글의 바로 다음(더 최신) 글로 이동 — 밀린 글 이어 읽기
+    const recentBtn = navBtn('최근', '#', false);
+    recentBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      goNextUnread(recentBtn);
+    });
+    bar.appendChild(recentBtn);
 
     // 게시판 버튼(현재 게시판 제외)
     for (const b of NAVI_BOARDS) {
@@ -531,6 +539,49 @@
       el.classList.toggle('uw-blocked', isBlockedRow(el));
     }
     scheduleSaveNavList();
+  }
+
+  /* ── 최근(밀린 글 이어 읽기) ──
+   *  - 웃긴자료 글을 열 때마다 그 글 번호를 "마지막으로 읽은 글"로 저장.
+   *  - [최근]: 마지막으로 읽은 글 페이지를 백그라운드로 받아 그 글의 "▲ 다음글"(바로 위, 더 최신 글)로 이동.
+   *    예) 3페이지 3번째 글을 마지막으로 읽었으면 → 3페이지 2번째 글.
+   *  - 기록이 없으면 웃긴자료 목록으로, 더 최신 글이 없으면 알림.
+   */
+  const RECENT_TABLE = 'pds';
+  const RECENT_KEY = `uw-last-read:${RECENT_TABLE}`;
+
+  function recordLastRead() {
+    if (!isRead || table !== RECENT_TABLE) return;
+    const n = params.get('number');
+    if (n) { try { localStorage.setItem(RECENT_KEY, n); } catch {} }
+  }
+
+  async function goNextUnread(btn) {
+    let last = null;
+    try { last = localStorage.getItem(RECENT_KEY); } catch {}
+    const listUrl = `/board/list.html?table=${RECENT_TABLE}`;
+    if (!last) { location.href = listUrl; return; }
+
+    const span = btn?.querySelector('span');
+    const label = span?.textContent;
+    if (span) span.textContent = '…';
+    try {
+      const url = `/board/read.html?table=${RECENT_TABLE}&number=${encodeURIComponent(last)}`;
+      const res = await fetch(url, { credentials: 'include' });
+      const buf = await res.arrayBuffer();
+      let html;
+      try { html = new TextDecoder('euc-kr').decode(buf); } catch { html = new TextDecoder().decode(buf); }
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const nextLi = [...doc.querySelectorAll('li.next_prev_li')]
+        .find((li) => (li.querySelector('.btn')?.textContent || '').includes('다음글'));
+      const href = nextLi?.querySelector('a')?.getAttribute('href');
+      if (href) { location.href = new URL(href, new URL(url, location.href)).href; return; }
+      if (span) span.textContent = label;
+      alert('마지막으로 읽은 글 이후의 새 글이 없어요.');
+    } catch {
+      if (span) span.textContent = label;
+      location.href = listUrl; // 실패 시 목록으로
+    }
   }
 
   /* ──────────────────────────────────────────────────────────
@@ -1932,6 +1983,7 @@
   watchNavi();
   initLoadMore();
   initHeaderBarFix();
+  recordLastRead();
   window.addEventListener('resize', () => { if (document.body) dedupeNavBlocks(); }, { passive: true });
   initUpdateNotice();
   window.addEventListener('pageshow', (e) => {
