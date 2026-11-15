@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.39.0
+// @version      1.39.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.39.0';
+  const SCRIPT_VERSION = '1.39.1';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -599,23 +599,60 @@
   }
 
   /* ── 목록 화면 플로팅 검색 버튼 ──
-   *  자동 더보기로 목록이 끝없이 이어져 맨 아래 검색창에 닿을 수 없는 문제 해결.
-   *  오른쪽 아래 작은 돋보기 → 검색 팝업(현재 게시판 제목 검색).
+   *  자동 더보기로 목록이 끝없이 이어져 맨 아래 사이트 검색창에 닿을 수 없는 문제 해결.
+   *  오른쪽 아래 작은 돋보기 → 사이트 원래 검색 폼(검색 대상·기간 선택 포함)을 화면 아래에 띄움.
+   *  원래 폼 요소를 그대로 옮겨 쓰므로 사이트 검색 동작·옵션이 그대로 유지됨.
+   *  사이트 폼을 못 찾으면 스크립트 검색 팝업(현재 게시판)으로 대체.
    */
+  let searchPanel = null;
+
+  function findSiteSearchForm() {
+    for (const inp of document.querySelectorAll('form input[name="sk"]')) {
+      const f = inp.closest('form');
+      if (f && !f.closest('uw-search, uw-searchpanel')) return f;
+    }
+    return null;
+  }
+
+  function toggleSearchPanel() {
+    if (searchPanel) {
+      const show = searchPanel.style.getPropertyValue('display') === 'none';
+      css(searchPanel, { display: show ? 'block' : 'none' });
+      if (show) searchPanel.querySelector('input[name="sk"]')?.focus();
+      return;
+    }
+    const form = findSiteSearchForm();
+    if (!form) { openSearchModal(table); return; }
+
+    searchPanel = el('uw-searchpanel', {
+      display: 'block', position: 'fixed', left: '8px', right: '8px',
+      bottom: 'calc(54px + env(safe-area-inset-bottom, 0px))', 'z-index': '2147482001',
+      padding: '10px', background: 'rgba(42,42,42,.97)', 'border-radius': '10px',
+      'box-shadow': '0 6px 20px rgba(0,0,0,.5)',
+    });
+    form.parentNode.insertBefore(el('uw-formhome', { display: 'none' }), form); // 원래 자리 표시
+    searchPanel.appendChild(form);
+    css(form, { display: 'flex', 'flex-wrap': 'wrap', 'align-items': 'center', gap: '6px', margin: '0' });
+    const sk = form.querySelector('input[name="sk"]');
+    if (sk) css(sk, { flex: '1 1 120px', 'min-width': '0', 'font-size': '16px' }); // 16px: iOS 확대 방지
+    document.body.appendChild(searchPanel);
+    sk?.focus();
+  }
+
   function injectSearchFab() {
     if (!isList || !table || document.querySelector('uw-fab')) return;
     const fab = el('uw-fab', {
       display: 'flex', 'align-items': 'center', 'justify-content': 'center',
-      position: 'fixed', right: '14px', bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
-      width: '42px', height: '42px', 'border-radius': '50%', 'z-index': '2147482000',
-      background: 'rgba(40,40,40,.88)', color: '#ddd', border: '1px solid #555',
-      'box-shadow': '0 3px 10px rgba(0,0,0,.45)', cursor: 'pointer',
+      position: 'fixed', right: '10px', bottom: 'calc(14px + env(safe-area-inset-bottom, 0px))',
+      width: '30px', height: '30px', 'border-radius': '50%', 'z-index': '2147482000',
+      background: 'rgba(40,40,40,.75)', color: '#bbb', border: '1px solid #555',
+      'box-shadow': '0 2px 6px rgba(0,0,0,.4)', cursor: 'pointer',
       '-webkit-tap-highlight-color': 'transparent',
     });
-    fab.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="display:block"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>';
+    fab.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="display:block"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>';
     fab.addEventListener('click', (e) => {
       e.preventDefault();
-      openSearchModal(table); // 클릭 핸들러 안에서 바로 focus(모바일 키보드)
+      toggleSearchPanel(); // 클릭 핸들러 안에서 바로 focus(모바일 키보드)
     });
     document.body.appendChild(fab);
   }
@@ -2015,7 +2052,7 @@
 
   const OBS_CONFIG = { childList: true, subtree: true };
   // 스크립트가 만든 UI(uw-*) 내부 변경은 무시 → 재생 중 불필요한 전체 스캔 방지
-  const OWN_UI_SEL = 'uw-mini, uw-navi, uw-search, uw-fab';
+  const OWN_UI_SEL = 'uw-mini, uw-navi, uw-search, uw-fab, uw-searchpanel';
   const obs = new MutationObserver((muts) => {
     for (const m of muts) {
       const t = m.target instanceof Element ? m.target : m.target.parentElement;
