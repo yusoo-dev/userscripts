@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.38.1
+// @version      1.38.2
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.38.1';
+  const SCRIPT_VERSION = '1.38.2';
   const SHOW_VERSION = false; // 버전 표시(디버그용)
 
   const params = new URLSearchParams(location.search);
@@ -1789,6 +1789,33 @@
     }
   }
 
+  /* ── 글 화면: "OO 오늘의 베스트" 순위 박스 숨김 ──
+   *  구조(id/class)를 모르는 영역이라 글자로 찾는다: "…오늘의 베스트" 제목 요소에서 위로 올라가며
+   *  순위 링크(read.html)가 3개 이상 들어 있는 가장 가까운 상자를 숨김.
+   *  본문·이전글/다음글·댓글이 들어 있는 상자에 닿으면 멈춤(오삭제 방지).
+   */
+  function hideTodayBestOnRead() {
+    if (!isRead || document.documentElement.dataset.uwBestHidden) return;
+    const SAFE = '.wrap_body, li.next_prev_li, #comment, video';
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const t = walker.currentNode.data.trim();
+      if (!/오늘의 베스트$/.test(t) || t.length > 20) continue;
+      const head = walker.currentNode.parentElement;
+      if (!head || head.closest('uw-navi, a')) continue; // 메뉴·버튼 속 글자는 제외
+      let box = null;
+      for (let e = head; e && e !== document.body; e = e.parentElement) {
+        if (e.querySelector(SAFE)) break;
+        if (e.querySelectorAll('a[href*="read.html"]').length >= 3) { box = e; break; }
+      }
+      if (box) {
+        css(box, { display: 'none' });
+        document.documentElement.dataset.uwBestHidden = '1';
+        return;
+      }
+    }
+  }
+
   /* ── 이전글·다음글 블록 중복 정리 ──
    *  글 페이지엔 같은 블록이 본문 아래·댓글 아래 2곳에 있음. 댓글이 없거나(숨김 포함) 짧아서
    *  두 블록이 한 화면에 같이 보이면 위쪽 블록을 숨김. 댓글이 늘어나면 다시 표시.
@@ -1947,6 +1974,7 @@
     injectNaviSearch();
     applyFilteredNav();
     dedupeNavBlocks();
+    hideTodayBestOnRead();
     if (!isList) return;
     scanPosts();
     tryClickLoadMore();
