@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.38.5
+// @version      1.39.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.38.5';
+  const SCRIPT_VERSION = '1.39.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -314,9 +314,11 @@
       margin: '0', padding: '10px', background: '#2a2a2a', 'border-radius': '12px',
       'box-shadow': '0 8px 30px rgba(0,0,0,.5)', 'box-sizing': 'border-box',
     });
+    let tableInput = null;
     for (const [name, value] of [['table', SEARCH_TABLE], ['st', 'subject'], ['searchday', SEARCH_DAY]]) {
       const h = document.createElement('input');
       h.type = 'hidden'; h.name = name; h.value = value;
+      if (name === 'table') tableInput = h;
       form.appendChild(h);
     }
     const input = el('input', {
@@ -353,13 +355,19 @@
     // 안드로이드 뒤로가기로 닫기: 열 때 history 항목 추가 → popstate에서 닫음
     window.addEventListener('popstate', () => { if (searchModal?.open) closeSearchModal(true); });
 
-    return { backdrop, input, open: false };
+    return { backdrop, input, tableInput, open: false };
   }
 
-  function openSearchModal() {
+  // targetTable: 검색할 게시판(기본: 대기자료). 플로팅 버튼은 현재 게시판을 넘김.
+  function openSearchModal(targetTable = SEARCH_TABLE) {
     searchModal ||= buildSearchModal();
     if (searchModal.open) return;
     searchModal.open = true;
+    const name = NAVI_BOARDS.find((b) => b.table === targetTable)?.name || '게시판';
+    searchModal.tableInput.value = targetTable;
+    searchModal.input.placeholder = `${name} 제목 검색`;
+    if (targetTable !== SEARCH_TABLE && searchModal.input.dataset.forTable !== targetTable) searchModal.input.value = '';
+    searchModal.input.dataset.forTable = targetTable;
     css(searchModal.backdrop, { display: 'flex' });
     searchModal.input.focus();
     searchModal.input.select();
@@ -588,6 +596,28 @@
       if (span) span.textContent = label;
       location.href = listUrl; // 실패 시 목록으로
     }
+  }
+
+  /* ── 목록 화면 플로팅 검색 버튼 ──
+   *  자동 더보기로 목록이 끝없이 이어져 맨 아래 검색창에 닿을 수 없는 문제 해결.
+   *  오른쪽 아래 작은 돋보기 → 검색 팝업(현재 게시판 제목 검색).
+   */
+  function injectSearchFab() {
+    if (!isList || !table || document.querySelector('uw-fab')) return;
+    const fab = el('uw-fab', {
+      display: 'flex', 'align-items': 'center', 'justify-content': 'center',
+      position: 'fixed', right: '14px', bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
+      width: '42px', height: '42px', 'border-radius': '50%', 'z-index': '2147482000',
+      background: 'rgba(40,40,40,.88)', color: '#ddd', border: '1px solid #555',
+      'box-shadow': '0 3px 10px rgba(0,0,0,.45)', cursor: 'pointer',
+      '-webkit-tap-highlight-color': 'transparent',
+    });
+    fab.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="display:block"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>';
+    fab.addEventListener('click', (e) => {
+      e.preventDefault();
+      openSearchModal(table); // 클릭 핸들러 안에서 바로 focus(모바일 키보드)
+    });
+    document.body.appendChild(fab);
   }
 
   /* ──────────────────────────────────────────────────────────
@@ -1960,7 +1990,7 @@
    *  - 같은 버전으로 두 번 새로고침하지 않음(무한 새로고침 방지).
    * ────────────────────────────────────────────────────────── */
 
-  const AUTO_RELOAD_WINDOW_MS = 2500;
+  const AUTO_RELOAD_WINDOW_MS = 8000; // 페이지 연 뒤 이 시간 안이고 조작 전이면 즉시 적용
 
   function initUpdateNotice() {
     let touched = false;
@@ -1985,7 +2015,7 @@
 
   const OBS_CONFIG = { childList: true, subtree: true };
   // 스크립트가 만든 UI(uw-*) 내부 변경은 무시 → 재생 중 불필요한 전체 스캔 방지
-  const OWN_UI_SEL = 'uw-mini, uw-navi, uw-search';
+  const OWN_UI_SEL = 'uw-mini, uw-navi, uw-search, uw-fab';
   const obs = new MutationObserver((muts) => {
     for (const m of muts) {
       const t = m.target instanceof Element ? m.target : m.target.parentElement;
@@ -2005,6 +2035,7 @@
     hookVideos();
     hookThumbs();
     injectNaviSearch();
+    injectSearchFab();
     applyFilteredNav();
     dedupeNavBlocks();
     hideBestAreas();
