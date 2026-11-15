@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.38.2
+// @version      1.38.3
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.38.2';
+  const SCRIPT_VERSION = '1.38.3';
   const SHOW_VERSION = false; // 버전 표시(디버그용)
 
   const params = new URLSearchParams(location.search);
@@ -1794,7 +1794,26 @@
    *  순위 링크(read.html)가 3개 이상 들어 있는 가장 가까운 상자를 숨김.
    *  본문·이전글/다음글·댓글이 들어 있는 상자에 닿으면 멈춤(오삭제 방지).
    */
+  // 글 화면: "오늘의 베스트 / 주간 베스트 …" 탭 버튼 줄도 숨김(#list_top이 아닌 다른 이름일 수 있어 글자로 찾음)
+  function hideBestTabsOnRead() {
+    if (!isRead || document.documentElement.dataset.uwTabsHidden) return;
+    const SAFE = '.wrap_body, li.next_prev_li, #comment, video, uw-navi';
+    for (const a of document.querySelectorAll('a')) {
+      if (a.closest('uw-navi') || !/주간\s*베스트/.test(a.textContent)) continue;
+      // 주간 베스트 링크에서 위로: "오늘의 베스트"도 함께 들어 있는 가장 가까운 상자
+      for (let e = a.parentElement; e && e !== document.body; e = e.parentElement) {
+        if (e.querySelector(SAFE)) break;
+        if (/오늘의\s*베스트/.test(e.textContent)) {
+          css(e, { display: 'none' });
+          document.documentElement.dataset.uwTabsHidden = '1';
+          return;
+        }
+      }
+    }
+  }
+
   function hideTodayBestOnRead() {
+    hideBestTabsOnRead();
     if (!isRead || document.documentElement.dataset.uwBestHidden) return;
     const SAFE = '.wrap_body, li.next_prev_li, #comment, video';
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
