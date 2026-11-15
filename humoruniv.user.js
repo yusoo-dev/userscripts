@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.36.3
+// @version      1.36.4
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.36.3';
+  const SCRIPT_VERSION = '1.36.4';
   const SHOW_VERSION = false; // 버전 표시(디버그용)
 
   const params = new URLSearchParams(location.search);
@@ -1635,6 +1635,22 @@
     return false;
   }
 
+  // 목록 맨 위(1페이지) 글에서 ▲ 다음글: 목록을 연 뒤 새로 올라온 글을 1페이지에서 다시 받아 앞에 붙임
+  async function refreshTop(ctx) {
+    let got;
+    try { got = await fetchListPage(ctx, 1); } catch { return false; }
+    if (!got?.length) return false;
+    const known = new Set(ctx.items.map((it) => it.n));
+    const firstKnown = ctx.items[0]?.n;
+    const idx = got.findIndex((it) => it.n === firstKnown);
+    // 기존 첫 글보다 위에 있는 글 = 새 글. 기존 첫 글이 안 보이면(새 글이 한 페이지 넘게 쌓임) 1페이지의 모르는 글 전부
+    const newer = (idx >= 0 ? got.slice(0, idx) : got).filter((it) => !known.has(it.n));
+    if (!newer.length) return false;
+    ctx.items = newer.concat(ctx.items);
+    saveNavCtx(ctx);
+    return true;
+  }
+
   // 하단 다음글/이전글 li 하나를 item 내용으로 교체
   function fillNavLi(li, item) {
     li.id = `li_chk_${table}-${item.n}`;
@@ -1657,12 +1673,13 @@
     }
   }
 
-  // 방향(isUp)별 버튼에 item 적용. item이 null이면 숨김.
-  function renderNav(isUpTarget, item) {
+  // 방향(isUp)별 버튼에 item 적용. item이 null이면 숨김(restore=true면 사이트 원래 링크를 다시 표시).
+  function renderNav(isUpTarget, item, restore = false) {
     for (const li of document.querySelectorAll('li.next_prev_li')) {
       const isUp = (li.querySelector('.btn')?.textContent || '').includes('다음글');
       if (isUp !== isUpTarget) continue;
       if (item) { fillNavLi(li, item); li.style.removeProperty('display'); }
+      else if (restore) li.style.removeProperty('display');
       else css(li, { display: 'none' });
     }
     for (const sp of document.querySelectorAll('span.top_btn')) {
@@ -1671,6 +1688,7 @@
       const a = sp.closest('a');
       if (!a) continue;
       if (item) { a.href = item.href; sp.id = `li_chk_${table}-${item.n}`; a.style.removeProperty('visibility'); }
+      else if (restore) a.style.removeProperty('visibility');
       else css(a, { visibility: 'hidden' }); // 자리는 유지(맨밑 버튼 위치 고정)
     }
     if (item && typeof window.check_read_mark === 'function') {
@@ -1694,14 +1712,18 @@
     renderNav(true, ctx.items[i - 1] || null);  // ▲ 다음글(더 최신)
     renderNav(false, ctx.items[i + 1] || null); // ▼ 이전글(더 오래됨)
 
-    // 페이지 경계면 이웃 페이지를 불러와 이어 붙임
-    if (!ctx.items[i + 1] && await extendNav(ctx, +1)) {
+    // 페이지 경계면 이웃 페이지를 불러와 이어 붙임.
+    // 그래도 못 찾으면 사이트 원래 이전글/다음글을 다시 보여줌(목록 정보가 오래돼 끊기는 것 방지).
+    if (!ctx.items[i + 1]) {
+      const ok = await extendNav(ctx, +1);
       i = idxOf();
-      renderNav(false, ctx.items[i + 1] || null);
+      renderNav(false, ctx.items[i + 1] || null, !ok);
     }
-    if (!ctx.items[i - 1] && ctx.firstPg > 1 && await extendNav(ctx, -1)) {
+    if (!ctx.items[i - 1]) {
+      // 1페이지 맨 위면 목록을 연 뒤 올라온 새 글 확인, 아니면 앞 페이지 불러오기
+      const ok = ctx.firstPg > 1 ? await extendNav(ctx, -1) : await refreshTop(ctx);
       i = idxOf();
-      renderNav(true, ctx.items[i - 1] || null);
+      renderNav(true, ctx.items[i - 1] || null, !ok);
     }
   }
 
