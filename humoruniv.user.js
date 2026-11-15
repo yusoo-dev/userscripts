@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.38.3
+// @version      1.38.4
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,8 +66,8 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.38.3';
-  const SHOW_VERSION = false; // 버전 표시(디버그용)
+  const SCRIPT_VERSION = '1.38.4';
+  const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
   const table = params.get('table') || '';
@@ -101,7 +101,7 @@
       #navi > .flex-container {
         height: 40px !important; min-height: 40px !important; max-height: 40px !important; overflow: hidden !important;
       }
-      #navi > .flex-container > :not(uw-navi) { display: none !important; }
+      #navi > .flex-container > :not(uw-navi):not(uw-ver) { display: none !important; }
       .comment_best_title { display: none !important; }
       li.low-reaction .comment_text,
       li.low-reaction .sub_comment > span:first-of-type { color: #4ecdff !important; }
@@ -276,16 +276,19 @@
       bar.appendChild(blockBtn);
     }
 
+    root.appendChild(bar);
+
+    // 버전: 메뉴 줄 오른쪽 끝에 고정(버튼이 많아 가로 스크롤돼도 항상 보이게 메뉴 밖에 겹쳐 둠)
     if (SHOW_VERSION) {
       const ver = el('uw-ver', {
-        display: 'block', 'margin-left': 'auto', 'flex-shrink': '0', padding: '0 2px',
-        color: '#666', 'font-size': '10px', 'white-space': 'nowrap',
+        display: 'flex', 'align-items': 'center', position: 'absolute', right: '0', top: '0', bottom: '0',
+        padding: '0 6px 0 10px', color: '#777', 'font-size': '10px', 'white-space': 'nowrap',
+        background: 'linear-gradient(to right, rgba(34,34,34,0), #222 8px)', 'pointer-events': 'none',
       });
       ver.textContent = `v${SCRIPT_VERSION}`;
-      bar.appendChild(ver);
+      root.appendChild(ver);
+      css(bar, { 'padding-right': '52px' }); // 마지막 버튼이 버전 글자에 가리지 않게
     }
-
-    root.appendChild(bar);
   }
 
   /* ── 검색 팝업 ──
