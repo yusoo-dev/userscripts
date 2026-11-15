@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.39.4
+// @version      1.39.5
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.39.4';
+  const SCRIPT_VERSION = '1.39.5';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -1890,17 +1890,20 @@
     renderNav(false, ctx.items[i + 1] || null); // ▼ 이전글(더 오래됨)
 
     // 페이지 경계면 이웃 페이지를 불러와 이어 붙임.
-    // 그래도 못 찾으면 사이트 원래 이전글/다음글을 다시 보여줌(목록 정보가 오래돼 끊기는 것 방지).
+    // 그래도 못 찾으면:
+    //  - 검색 결과에서 온 글: 숨김 유지(검색어와 무관한 글로 넘어가지 않게)
+    //  - 일반 목록(필터)에서 온 글: 사이트 원래 이전글/다음글을 다시 보여줌(목록 정보가 오래돼 끊기는 것 방지)
+    const fromSearch = /[?&]sk=[^&]/.test(ctx.listUrl || '');
     if (!ctx.items[i + 1]) {
       const ok = await extendNav(ctx, +1);
       i = idxOf();
-      renderNav(false, ctx.items[i + 1] || null, !ok);
+      renderNav(false, ctx.items[i + 1] || null, !ok && !fromSearch);
     }
     if (!ctx.items[i - 1]) {
-      // 1페이지 맨 위면 목록을 연 뒤 올라온 새 글 확인, 아니면 앞 페이지 불러오기
+      // 1페이지 맨 위면 목록을 연 뒤 올라온 새 글 확인(검색이면 검색 결과 1페이지), 아니면 앞 페이지 불러오기
       const ok = ctx.firstPg > 1 ? await extendNav(ctx, -1) : await refreshTop(ctx);
       i = idxOf();
-      renderNav(true, ctx.items[i - 1] || null, !ok);
+      renderNav(true, ctx.items[i - 1] || null, !ok && !fromSearch);
     }
   }
 
