@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.36.4
+// @version      1.37.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.36.4';
+  const SCRIPT_VERSION = '1.37.0';
   const SHOW_VERSION = false; // 버전 표시(디버그용)
 
   const params = new URLSearchParams(location.search);
@@ -119,7 +119,7 @@
       /* 필터 통과(uw-ok) 전까지 행 전체 숨김 → 탈락 글 깜빡임·갭 방지 */
       html.uw-filtering .post_item:not(.uw-ok) { display: none !important; }
 
-      /* 차단한 작성자의 글 숨김(모든 게시판) */
+      /* 차단한 작성자의 글 숨김(게시판별 목록) */
       .post_item.uw-blocked { display: none !important; }
       /* 차단 선택 모드: 글 행 강조 */
       html.uw-picking .post_item { outline: 1px dashed rgba(255,90,90,.7) !important; outline-offset: -3px !important; }
@@ -362,26 +362,36 @@
 
   /* ── 작성자 차단 ──
    *  [차단] 버튼 → 목록의 글 선택 → 그 글 작성자 차단. (닉네임 직접 편집은 '목록 관리')
-   *  모든 게시판에 공통 적용, 이 기기 브라우저에 저장(localStorage).
+   *  게시판별로 따로 적용·저장(localStorage, 키: uw-blocked-nicks:<table>).
    *  필터/검색 기준 이전글·다음글에서도 제외됨.
    */
-  const BLOCK_KEY = 'uw-blocked-nicks';
+  // 게시판(table)별로 따로 저장·적용. 예: 대기자료에서 차단한 사람은 대기자료 목록에서만 숨김.
+  const BLOCK_KEY_LEGACY = 'uw-blocked-nicks';            // 예전(전체 공통) 목록
+  const BLOCK_KEY = () => `uw-blocked-nicks:${table || '_'}`;
   let blockedCache = null;
 
   function blockedNicks() {
     if (!blockedCache) {
+      let raw = null;
+      try {
+        raw = localStorage.getItem(BLOCK_KEY());
+        // 처음 쓰는 게시판: 예전 공통 목록으로 시작(기존 동작 유지). 이후엔 게시판마다 따로 편집.
+        if (raw == null) raw = localStorage.getItem(BLOCK_KEY_LEGACY);
+      } catch {}
       let arr = [];
-      try { arr = JSON.parse(localStorage.getItem(BLOCK_KEY) || '[]'); } catch {}
+      try { arr = JSON.parse(raw || '[]'); } catch {}
       blockedCache = new Set(arr.map((n) => String(n).trim()).filter(Boolean));
     }
     return blockedCache;
   }
 
   function saveBlockedNicks(list) {
-    const uniq = [...new Set(list.map((n) => n.trim()).filter(Boolean))];
-    try { localStorage.setItem(BLOCK_KEY, JSON.stringify(uniq)); } catch {}
+    const uniq = [...new Set(list.map((n) => String(n).trim()).filter(Boolean))];
+    try { localStorage.setItem(BLOCK_KEY(), JSON.stringify(uniq)); } catch {}
     blockedCache = new Set(uniq);
   }
+
+  const boardLabel = () => NAVI_BOARDS.find((b) => b.table === table)?.label || '이 게시판';
 
   function rowNick(el) {
     for (const sel of ['.hu_nick_txt', '.nick', '[class*="nick"]']) { // 우선순위 순서대로
@@ -411,9 +421,9 @@
         'box-shadow': '0 8px 30px rgba(0,0,0,.5)',
       });
       const title = el('div', { display: 'block', color: '#eee', 'font-size': '15px', 'font-weight': 'bold' });
-      title.textContent = '작성자 차단';
+      title.textContent = `작성자 차단 · ${boardLabel()}`;
       const hint = el('div', { display: 'block', color: '#999', 'font-size': '12px', 'line-height': '1.4' });
-      hint.textContent = '닉네임을 한 줄에 하나씩 입력하세요. 목록에서 해당 작성자의 글이 숨겨집니다.';
+      hint.textContent = `닉네임을 한 줄에 하나씩 입력하세요. ${boardLabel()} 목록에서만 해당 작성자의 글이 숨겨집니다.`;
       const ta = el('textarea', {
         display: 'block', width: '100%', height: '160px', padding: '8px 10px',
         'border-radius': '8px', border: '1px solid #555', background: '#1b1b1b',
@@ -480,7 +490,7 @@
       background: 'rgba(40,40,40,.97)', 'box-shadow': '0 4px 16px rgba(0,0,0,.45)',
     });
     const msg = el('span', { display: 'block', flex: '1 1 auto', color: '#eee', 'font-size': '13px' });
-    msg.textContent = '차단할 작성자의 글을 누르세요';
+    msg.textContent = `${boardLabel()}: 차단할 작성자의 글을 누르세요`;
     const mk = (label, bg) => {
       const b = el('button', {
         display: 'block', flex: 'none', height: '30px', padding: '0 10px', 'border-radius': '6px',
@@ -507,7 +517,7 @@
     e.stopImmediatePropagation();
     const nick = rowNick(row);
     if (!nick) { alert('이 글의 작성자 닉네임을 찾지 못했어요.'); return; }
-    if (!confirm(`'${nick}' 님의 글을 모두 숨길까요?`)) return;
+    if (!confirm(`${boardLabel()}에서 '${nick}' 님의 글을 모두 숨길까요?`)) return;
     saveBlockedNicks([...blockedNicks(), nick]);
     applyBlockedToRows();
     updateBlockBtnLabel();
