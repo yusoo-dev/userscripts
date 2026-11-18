@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.43
+// @version      7.44
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.43';
+const HH_VERSION = '7.44';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -4402,50 +4402,56 @@ if (!isReader) {
 function setupReaderNav(win, opts = {}) {
 	const doc = win.document;
 	const loc = win.location;
-	// 2장 펼침 기준 고정 배치: [1] / [2,3] / [4,5] / …  (1페이지 = 표지 단독)
-	// ※ 예전엔 '방문 기록 스택 + hashchange' 로 되돌아갔는데, A/D 를 빠르게 오가거나 사이트가 해시를 고치면
-	//   스택이 어긋나 페이지 이동이 고장났음 → 상태 없이 현재 해시에서 매번 계산
+	// 펼침 계산: 현재 해시의 짝을 그대로 유지 (#5-6 → #7-8, #2-3 → #4-5), 1장(#1)이면 다음은 #2-3
+	// ※ 상태(방문 기록 스택)를 두지 않고 매번 현재 해시에서 계산 → A/D 를 어떻게 눌러도 어긋나지 않음
+	// 전체 장수: 리더 페이지의 실제 값(galleryinfo, 미리 받기 스크립트가 data-hh-total 로 공개) 우선
 	const total = () => {
+		const real = parseInt(doc.documentElement.getAttribute('data-hh-total') || '', 10);
+		if (real > 0) return real;
 		const t = opts.total?.() || 0;
 		if (t) return t;
 		const id = (loc.pathname.match(/\/reader\/(\d+)\.html/) || [])[1];
 		return (id && getPageCounts()[id]) || 0;
 	};
-	const currentPage = () => {
-		const n = parseInt(loc.hash.replace(/^#/, '').split('-')[0], 10);
-		return isNaN(n) || n < 1 ? 1 : n;
+	const parseSpread = (hash) => {
+		const nums = hash
+			.replace(/^#/, '')
+			.split('-')
+			.map((n) => parseInt(n, 10))
+			.filter((n) => !isNaN(n) && n > 0);
+		if (!nums.length) return [1];
+		return nums.length === 1 ? [nums[0]] : [nums[0], nums[0] + 1];
 	};
-	const spreadStart = (p) => (p <= 1 ? 1 : p % 2 === 0 ? p : p - 1);
+	const hashFor = (sp) => (sp.length === 1 ? `#${sp[0]}` : `#${sp[0]}-${sp[1]}`);
+	// 마지막 장을 넘는 짝은 1장으로
+	const clamp = (sp) => {
+		const t = total();
+		return t && sp.length === 2 && sp[1] > t ? [sp[0]] : sp;
+	};
 
 	// 아주 빠르게 누를 때: 해시를 매번 바꾸면 사이트 리더가 따라오지 못해 먹통이 됨
-	// → 목표 페이지(target)만 즉시 갱신하고, 실제 해시 변경은 MIN_GAP 간격으로 최신 목표만 반영
+	// → 목표 펼침(target)만 즉시 갱신하고, 실제 해시 변경은 MIN_GAP 간격으로 최신 목표만 반영
 	const MIN_GAP = 120;
-	let target = null; // 아직 반영 안 된 목표 펼침 시작 페이지
+	let target = null;
 	let lastApply = 0;
 	let applyTimer = null;
-	const hashFor = (start) => {
-		const t = total();
-		if (start <= 1) return '#1';
-		if (t && start + 1 > t) return `#${start}`; // 마지막 장이 홀로 남으면 1장만
-		return `#${start}-${start + 1}`;
-	};
 	function apply() {
 		applyTimer = null;
-		if (target == null) return;
+		if (!target) return;
 		const h = hashFor(target);
 		target = null;
 		lastApply = Date.now();
 		if (loc.hash !== h) loc.hash = h;
 	}
-	function go(start) {
-		target = start;
-		if (applyTimer) return; // 이미 예약됨 → 최신 목표로 반영됨
+	function go(sp) {
+		target = clamp(sp);
+		if (applyTimer) return; // 이미 예약됨 → 최신 목표로 반영
 		const wait = Math.max(0, MIN_GAP - (Date.now() - lastApply));
 		if (wait === 0) apply();
 		else applyTimer = win.setTimeout(apply, wait);
 	}
-	// 현재 기준 페이지: 반영 대기 중인 목표가 있으면 그것 (해시는 아직 옛 값)
-	const basePage = () => (target != null ? target : currentPage());
+	// 현재 기준: 반영 대기 중인 목표가 있으면 그것 (해시는 아직 옛 값)
+	const current = () => target || parseSpread(loc.hash);
 
 	// capture 단계 + 전파 중단: 사이트 리더의 키 처리와 겹쳐 해시가 엉키는 것 방지
 	win.addEventListener('keydown', (e) => {
@@ -4468,13 +4474,13 @@ function setupReaderNav(win, opts = {}) {
 		e.preventDefault();
 		e.stopImmediatePropagation();
 
-		const s = spreadStart(basePage());
+		const sp = current();
 
 		// A: 다음 펼침
 		if (key === 'a' || key === 'ㅁ') {
-			const next = s === 1 ? 2 : s + 2;
+			const next = sp.length === 1 ? (sp[0] === 1 ? [2, 3] : [sp[0] + 1, sp[0] + 2]) : [sp[0] + 2, sp[1] + 2];
 			const t = total();
-			if (t && next > t) {
+			if (t && next[0] > t) {
 				if (opts.onEnd) opts.onEnd(); // 뷰어: 다음 편으로
 				return; // 일반 리더: 마지막에서 멈춤
 			}
@@ -4484,8 +4490,9 @@ function setupReaderNav(win, opts = {}) {
 
 		// D: 이전 펼침
 		if (key === 'd' || key === 'ㅇ') {
-			if (s === 1) return;
-			go(s === 2 ? 1 : s - 2);
+			const a = sp[0];
+			if (a <= 1) return;
+			go(a <= 3 && a - 2 < 2 ? [1] : [a - 2, a - 1]);
 			return;
 		}
 
