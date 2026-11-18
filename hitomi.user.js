@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.36
+// @version      7.37
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.36';
+const HH_VERSION = '7.37';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -3665,15 +3665,24 @@ function setupFavSidebar() {
 	const title = h('b', { textContent: 'FAVORITES' });
 	const count = h('span');
 	const closeBtn = h('button', { type: 'button', className: 'fb-close', textContent: '✕', title: '닫기 ( ] )' });
+	// 랜덤 진행 표시: "랜덤 5 · 본 개수/전체" (단위 = 시리즈 1개 또는 단독 작품 1개)
+	// 본 기록(randomPicked)은 메모리에만 있어서 새로고침하면 0부터 다시
+	let randomFlashTimer = null;
+	const randomLabel = () => {
+		const all = favUnits();
+		const seen = all.filter((arr) => randomPicked.has(unitKey(arr))).length;
+		return `랜덤 5 · ${seen}/${all.length}`;
+	};
 	const randomBtn = h('button', {
 		type: 'button',
 		className: 'fb-random',
 		textContent: '랜덤 5',
-		title: '즐겨찾기에서 무작위 5개 열기 ( R ) (시리즈는 전 편, 1개로 계산)\n새로고침 전까지 이미 연 것은 제외 · 다 열면 처음부터',
+		title: '즐겨찾기에서 무작위 5개 열기 ( R ) (시리즈는 전 편, 1개로 계산)\n본 개수/전체 · 새로고침 전까지 이미 연 것은 제외 · 다 보면 처음부터 · 새로고침하면 초기화',
 		onclick: () => {
-			const { units, tabs, left, reset } = openRandomFavs(5);
-			randomBtn.textContent = !units ? '없음' : `${reset ? '처음부터 · ' : ''}${tabs}탭 · 남은 ${left}`;
-			setTimeout(() => (randomBtn.textContent = '랜덤 5'), 2000);
+			const { units, tabs, reset } = openRandomFavs(5);
+			clearTimeout(randomFlashTimer);
+			randomBtn.textContent = !units ? '없음' : `${reset ? '처음부터 · ' : ''}${tabs}탭 열림`;
+			randomFlashTimer = setTimeout(() => (randomBtn.textContent = randomLabel()), 1500);
 		},
 	});
 	const head = h('div', { className: 'fb-head' }, [title, randomBtn, count, closeBtn]);
@@ -3765,6 +3774,7 @@ function setupFavSidebar() {
 	function render() {
 		const favs = getFavGalleries();
 		count.textContent = favs.length;
+		if (!randomFlashTimer || randomBtn.textContent.startsWith('랜덤')) randomBtn.textContent = randomLabel();
 		if (!isOpen()) return; // 닫힌 상태면 목록은 열릴 때 그림
 
 		const q = search.value.trim().toLowerCase();
