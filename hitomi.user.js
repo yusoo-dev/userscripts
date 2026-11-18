@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.41
+// @version      7.42
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.41';
+const HH_VERSION = '7.42';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -4402,24 +4402,25 @@ if (!isReader) {
 function setupReaderNav(win, opts = {}) {
 	const doc = win.document;
 	const loc = win.location;
-	// 방문 기록 스택
-	let historyStack = [];
-	let lastHash = '';
-
-	function getPagesFromHash() {
-		const raw = loc.hash.replace(/^#/, '');
-		const nums = raw
-			.split('-')
-			.filter(Boolean)
-			.map((n) => parseInt(n, 10))
-			.filter((n) => !isNaN(n));
-		if (nums.length === 0) return [1];
-		if (nums.length === 1) return [nums[0]];
-		return [nums[0], nums[0] + 1];
-	}
-
-	function setHash(pages) {
-		loc.hash = pages.length === 1 && pages[0] === 1 ? '#1' : '#' + pages.join('-');
+	// 2장 펼침 기준 고정 배치: [1] / [2,3] / [4,5] / …  (1페이지 = 표지 단독)
+	// ※ 예전엔 '방문 기록 스택 + hashchange' 로 되돌아갔는데, A/D 를 빠르게 오가거나 사이트가 해시를 고치면
+	//   스택이 어긋나 페이지 이동이 고장났음 → 상태 없이 현재 해시에서 매번 계산
+	const total = () => {
+		const t = opts.total?.() || 0;
+		if (t) return t;
+		const id = (loc.pathname.match(/\/reader\/(\d+)\.html/) || [])[1];
+		return (id && getPageCounts()[id]) || 0;
+	};
+	const currentPage = () => {
+		const n = parseInt(loc.hash.replace(/^#/, '').split('-')[0], 10);
+		return isNaN(n) || n < 1 ? 1 : n;
+	};
+	const spreadStart = (p) => (p <= 1 ? 1 : p % 2 === 0 ? p : p - 1);
+	function go(start) {
+		const t = total();
+		if (start <= 1) loc.hash = '#1';
+		else if (t && start + 1 > t) loc.hash = `#${start}`; // 마지막 장이 홀로 남으면 1장만
+		else loc.hash = `#${start}-${start + 1}`;
 	}
 
 	doc.addEventListener('keydown', (e) => {
@@ -4439,55 +4440,31 @@ function setupReaderNav(win, opts = {}) {
 		}
 		if (isCmd || e.altKey) return;
 		if (!['a', 'ㅁ', 'd', 'ㅇ', 's', 'ㄴ'].includes(key)) return;
+		e.preventDefault();
 
-		let pages = getPagesFromHash();
+		const s = spreadStart(currentPage());
 
+		// A: 다음 펼침
 		if (key === 'a' || key === 'ㅁ') {
-			if (pages.length === 1) pages = [pages[0] + 1, pages[0] + 2];
-			else pages = [pages[0] + 2, pages[1] + 2];
-			// 뷰어: 마지막 장을 넘기면 다음 편으로
-			const total = opts.onEnd ? opts.total?.() || 0 : 0;
-			if (total && pages[0] > total) {
-				e.preventDefault();
-				opts.onEnd();
-				return;
+			const next = s === 1 ? 2 : s + 2;
+			const t = total();
+			if (t && next > t) {
+				if (opts.onEnd) opts.onEnd(); // 뷰어: 다음 편으로
+				return; // 일반 리더: 마지막에서 멈춤
 			}
-			historyStack.push(getPagesFromHash());
-			setHash(pages);
+			go(next);
 			return;
 		}
 
+		// D: 이전 펼침
 		if (key === 'd' || key === 'ㅇ') {
-			if (historyStack.length === 0) {
-				if (pages.length === 2) {
-					if (pages[0] === 2) pages = [1];
-					else pages = [pages[0] - 2, pages[1] - 2];
-				} else {
-					if (pages[0] === 2) pages = [1];
-					else if (pages[0] === 1) return;
-					else pages = [pages[0] - 2, pages[0] - 1];
-				}
-			} else {
-				pages = historyStack.pop();
-			}
-			setHash(pages);
+			if (s === 1) return;
+			go(s === 2 ? 1 : s - 2);
 			return;
 		}
 
-		if (key === 's' || key === 'ㄴ') {
-			e.preventDefault();
-			(opts.onClose || hhCloseTab)();
-		}
-	});
-
-	win.addEventListener('hashchange', () => {
-		setTimeout(function () {
-			if (lastHash == loc.hash) {
-				historyStack.pop();
-			} else {
-				lastHash = loc.hash;
-			}
-		});
+		// S: 닫기
+		(opts.onClose || hhCloseTab)();
 	});
 }
 
