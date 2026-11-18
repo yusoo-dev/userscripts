@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.44.0
+// @version      1.44.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.44.0';
+  const SCRIPT_VERSION = '1.44.1';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -255,7 +255,8 @@
     for (const b of NAVI_BOARDS) {
       if (b.table === table) continue;
       const bb = navBtn(b.label, `/board/list.html?table=${b.table}`, false);
-      if (b.table !== RECENT_TABLE) { bb.dataset.uwNewKey = listKey(b.table, ''); bindUnreadJump(bb); } // 웃자는 '최근'이 담당
+      // 새 글(연두색) 표시 제외: 웃자는 '최근'이 담당, 대자는 표시 안 함
+      if (!NEW_MARK_EXCLUDE.includes(b.table)) { bb.dataset.uwNewKey = listKey(b.table, ''); bindUnreadJump(bb); }
       bar.appendChild(bb);
     }
 
@@ -833,6 +834,7 @@
    */
   const AI_RE = /(^|[^a-z])ai($|[^a-z])/i;
   const NEW_KEY_RECENT = 'recent';
+  const NEW_MARK_EXCLUDE = ['pds', 'pdswait']; // 연두색 표시를 하지 않는 게시판 버튼(웃자·대자)
   const NEW_CHECK_TTL = 3 * 60 * 1000;
   const listKey = (t, sk) => `${t}|${String(sk || '').toUpperCase()}`;
   const store2 = {
