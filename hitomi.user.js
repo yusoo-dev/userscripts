@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.44
+// @version      7.45
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.44';
+const HH_VERSION = '7.45';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -298,22 +298,6 @@ html.hh-favbar-open #hh-favbar-toggle { display: none; }
 #hh-favbar .fb-item button:hover { color: var(--hh-danger); }
 #hh-favbar .fb-item.dragging { opacity: .4; }
 #hh-favbar .fb-item.drop { background: rgba(250,204,21,.12); outline: 1px dashed var(--hh-fav); outline-offset: -1px; }
-
-/* ================= 즐겨찾기 전체 화면 리더 (뷰어) ================= */
-#hh-viewer { position: fixed; inset: 0; z-index: 2147483000; background: #000; }
-/* 닫힘: 화면에서 감추되 미리 열어 둔 프레임은 계속 로드되도록 display:none 은 쓰지 않음 */
-#hh-viewer.closed { opacity: 0; pointer-events: none; z-index: -1; }
-#hh-viewer .hh-viewer-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
-#hh-viewer .hh-viewer-frame.spare { opacity: 0; pointer-events: none; z-index: -1; }
-#hh-viewer .hh-viewer-label {
-  position: absolute; left: 50%; top: 14px; z-index: 2; translate: -50% 0; max-width: 80vw;
-  padding: 6px 14px; border-radius: var(--hh-pill); border: 1px solid var(--hh-line);
-  background: var(--hh-overlay); color: var(--hh-text); font: var(--hh-font);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
-  opacity: 0; transition: opacity .25s ease;
-  scale: var(--hh-ui-scale, 1); transform-origin: 50% 0;
-}
-#hh-viewer .hh-viewer-label.show { opacity: 1; }
 
 /* ================= 리더: 우측 상단 연두 태그 목록 ================= */
 /* 화면 배율과 무관하게 모서리에 붙도록 여백도 배율만큼 축소 */
@@ -2772,7 +2756,6 @@ function openCardsInBackground({ onlyHighlighted = false } = {}) {
 document.addEventListener('keydown', async (e) => {
 	// reader 페이지는 아래 Reader 블록이 처리
 	if (isReader) return;
-	if (viewer.isOpen()) return; // 뷰어(전체 화면 리더) 사용 중
 
 	const isInput = ['INPUT', 'TEXTAREA'].includes(
 		document.activeElement.tagName
@@ -3221,7 +3204,6 @@ function setupSettingsPanel({ corner = 'bottom' } = {}) {
 			{ id: 'favs', group: 'work', label: '★ 즐겨찾기', count: getFavGalleries().length },
 			...(hasGallery ? [{ id: 'gallery', group: 'work', label: '현재 작품' }] : []),
 			...LISTS.map((l) => ({ id: l.id, group: l.group, label: l.label, count: getTagList(l.key).length })),
-			{ id: 'viewer', group: 'etc', label: '즐겨찾기 열기' },
 			{ id: 'display', group: 'etc', label: '화면 배율' },
 			{ id: 'dict', group: 'etc', label: '번역 사전' },
 			{ id: 'backup', group: 'etc', label: '백업' },
@@ -3255,7 +3237,6 @@ function setupSettingsPanel({ corner = 'bottom' } = {}) {
 		else if (activeTab === 'favs') renderFavs();
 		else if (activeTab === 'dict') renderDict();
 		else if (activeTab === 'display') renderDisplay();
-		else if (activeTab === 'viewer') renderViewer();
 		else renderBackup();
 	}
 
@@ -3473,46 +3454,6 @@ function setupSettingsPanel({ corner = 'bottom' } = {}) {
 				: [])
 		);
 		input.focus();
-	}
-
-	// 즐겨찾기 열기 방식 (뷰어) 설정
-	function renderViewer() {
-		const vs = getViewerSettings();
-		const option = (key, value, label, desc) =>
-			el('button', {
-				type: 'button',
-				className: 'hh-btn' + (vs[key] === value ? ' sel' : ''),
-				style: 'display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left',
-				onclick: () => {
-					setViewerSettings({ [key]: value });
-					renderViewer();
-					notify('저장됨');
-				},
-			}, [
-				el('span', { textContent: (vs[key] === value ? '● ' : '○ ') + label }),
-				el('span', { className: 'hh-desc', style: 'margin:0;font-size:11px', textContent: desc }),
-			]);
-		const section = (title, children) => [el('div', { className: 'hh-sec', textContent: title }), el('div', { className: 'hh-favs' }, children)];
-		body.replaceChildren(
-			titleRow('즐겨찾기 열기'),
-			el('div', { className: 'hh-desc', textContent: '즐겨찾기 사이드바에서 작품을 클릭했을 때 (⌘/Ctrl+클릭은 항상 새 탭)' }),
-			...section('여는 방식', [
-				option('mode', 'viewer', '전체 화면 리더', '현재 페이지 위에 리더를 띄움 · 리더 단축키 그대로 · Esc 로 닫고 다음 작품 클릭'),
-				option('mode', 'tab', '탭으로 열기', '예전 방식 (작품 = 현재 탭, 시리즈 = 전 편 새 탭)'),
-			]),
-			...section('시리즈', [
-				option('series', 'chain', '1편부터 이어 보기', '마지막 장 다음으로 넘기면(A) 다음 편으로'),
-				option('series', 'tabs', '전 편을 탭으로', '시리즈는 예전처럼 전 편을 새 탭으로 열기'),
-			]),
-			...section('미리 열기', [
-				option('preload', true, '켜기', '다음 편 / 사이드바의 다음 작품을 뒤에서 미리 열어 둠 → 넘어갈 때 바로 표시'),
-				option('preload', false, '끄기', '보고 있는 작품만 받음 (데이터·메모리 절약)'),
-			]),
-			...section('전체 화면', [
-				option('fullscreen', true, '브라우저 전체 화면', 'Esc 한 번에 전체 화면 해제 + 닫기'),
-				option('fullscreen', false, '창 크기로', '브라우저 창 안에서만 꽉 차게'),
-			])
-		);
 	}
 
 	function renderDisplay() {
@@ -3980,21 +3921,6 @@ function setupFavSidebar() {
 						);
 					}
 
-					// 뷰어(전체 화면 리더)로 열기: 일반 클릭만. ⌘/Ctrl/Shift+클릭·가운데 클릭은 예전처럼 탭
-					row.dataset.ids = arr.map((x) => x.id).join(',');
-					row.addEventListener('click', (e) => {
-						const vs = getViewerSettings();
-						if (vs.mode !== 'viewer' || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-						if (isSeries && vs.series !== 'chain') return; // 시리즈를 탭으로 여는 설정 → 아래 openAll
-						e.preventDefault();
-						e.stopImmediatePropagation();
-						// 사이드바에 보이는 순서상 다음 작품 (미리 열기 대상)
-						const rows = [...list.querySelectorAll('.fb-item')].filter((r) => r.offsetParent !== null);
-						const nextRow = rows[rows.indexOf(row) + 1];
-						const nextId = nextRow ? nextRow.dataset.ids.split(',')[0] : null;
-						viewer.open(arr.map((x) => x.id), nextId);
-					});
-
 					// 시리즈: 클릭 / Cmd·Ctrl+클릭 / 휠(가운데) 클릭 모두 전 편을 순서대로 백그라운드 탭으로 열기
 					if (isSeries) {
 						const openAll = (e) => {
@@ -4397,8 +4323,7 @@ if (!isReader) {
 }
 
 // === Reader 페이지 넘김 (구 [HITOMI 리더]) ===
-// win: 리더 창 (일반 리더 탭 = window, 뷰어 = iframe.contentWindow)
-// opts: inFrame(뷰어 안), onClose(S 키), onEnd(마지막 장 다음으로 넘길 때), total()(전체 장수)
+// win: 리더 창 / opts: onClose(S 키), onEnd(마지막 장 다음으로 넘길 때), total()(전체 장수) — 모두 선택
 function setupReaderNav(win, opts = {}) {
 	const doc = win.document;
 	const loc = win.location;
@@ -4461,9 +4386,8 @@ function setupReaderNav(win, opts = {}) {
 		const key = e.key;
 		const isCmd = e.metaKey || e.ctrlKey; // macOS cmd, Windows ctrl 공통 처리
 
-		// cmd+a: 갤러리 페이지로 (뷰어 안에서는 사용 안 함)
+		// cmd+a: 갤러리 페이지로
 		if (isCmd && key === 'a') {
-			if (opts.inFrame) return;
 			e.preventDefault();
 			const match = loc.href.match(/\/reader\/(\d+)\.html/);
 			if (match) loc.href = `https://hitomi.la/galleries/${match[1]}.html`;
@@ -4481,8 +4405,8 @@ function setupReaderNav(win, opts = {}) {
 			const next = sp.length === 1 ? (sp[0] === 1 ? [2, 3] : [sp[0] + 1, sp[0] + 2]) : [sp[0] + 2, sp[1] + 2];
 			const t = total();
 			if (t && next[0] > t) {
-				if (opts.onEnd) opts.onEnd(); // 뷰어: 다음 편으로
-				return; // 일반 리더: 마지막에서 멈춤
+				opts.onEnd?.();
+				return; // 마지막에서 멈춤
 			}
 			go(next);
 			return;
@@ -4508,7 +4432,7 @@ function setupReaderSlide(win) {
 	let interval = 7000;
 
 	const status = doc.createElement('div');
-	status.id = 'hh-slide'; // 스타일: 공통 CSS / 뷰어는 READER_FRAME_CSS
+	status.id = 'hh-slide'; // 스타일: 공통 CSS (#hh-slide)
 	status.textContent = '⏸';
 	doc.body.appendChild(status);
 
@@ -4568,241 +4492,8 @@ if (isReader) {
 	setupReaderSlide(window);
 }
 
-// =====================================================================
-// === 즐겨찾기 전체 화면 리더 (뷰어) ===
-// 즐겨찾기 사이드바에서 작품 클릭 → 현재 페이지 위에 리더를 전체 화면으로 띄움
-//  - 리더 단축키 그대로 (A 다음 / D 이전 / S·Esc 닫기 / F 즐겨찾기 / [ ] 자동 넘김)
-//  - 시리즈: 1편부터 열고 마지막 장 다음으로 넘기면 다음 편으로 이어 보기 (설정)
-//  - 다음 편 / 사이드바의 다음 작품을 뒤에서 미리 열어 둠 → 넘어갈 때 바로 표시 (설정)
-//  - 같은 사이트(hitomi.la) 리더 페이지를 iframe 으로 띄우고, 단축키·스타일·미리 받기를 부모에서 직접 붙임
-//    (프레임 안에서 스크립트를 따로 실행하지 않음 → @noframes 그대로)
-// 설정: ⚙ > 기타 > 즐겨찾기 열기
-// =====================================================================
-const VIEWER_KEY = 'hitomi_viewer_settings';
-const VIEWER_DEFAULTS = {
-	mode: 'viewer', // 'viewer' = 전체 화면 리더 / 'tab' = 예전처럼 탭으로 열기
-	series: 'chain', // 'chain' = 1편부터 이어 보기 / 'tabs' = 전 편을 탭으로
-	preload: true, // 다음 편/다음 작품 미리 열기
-	fullscreen: true, // 브라우저 전체 화면 사용 (끄면 창 크기로)
-};
-function getViewerSettings() {
-	const v = readJSON(VIEWER_KEY, {});
-	return { ...VIEWER_DEFAULTS, ...(v && typeof v === 'object' ? v : {}) };
-}
-function setViewerSettings(patch) {
-	localStorage.setItem(VIEWER_KEY, JSON.stringify({ ...getViewerSettings(), ...patch }));
-}
-
-// 프레임(리더) 안에 넣는 스타일: 리더 보정 + 자동 넘김 표시
-const READER_FRAME_CSS = `
-html, body, #comicImages { background-color: #000 !important; }
-.navbar { display: none !important; }
-img { max-height: 100% !important; }
-#hh-slide {
-  position: fixed; right: 8px; bottom: 6px; z-index: 99999; pointer-events: none;
-  font: 10px/1.2 ui-monospace, monospace; color: #9a9a9a; opacity: .45;
-}
-#hh-slide.on { opacity: 1; color: #4ade80; }
-`;
-
-const viewer = (() => {
-	let root = null;
-	let label = null;
-	let frame = null; // 보고 있는 프레임
-	let spare = null; // 미리 열어 둔 프레임 (다음 편 또는 다음 작품)
-	let queue = []; // 이번에 볼 갤러리 ID 목록 (시리즈 이어 보기면 전 편)
-	let idx = 0;
-	let nextUnitId = null; // 사이드바 순서상 다음 작품 (미리 열기 대상)
-	let labelTimer = null;
-
-	const isOpen = () => !!root && !root.classList.contains('closed');
-
-	function ensureRoot() {
-		if (root) return;
-		root = document.createElement('div');
-		root.id = 'hh-viewer';
-		root.className = 'closed';
-		label = document.createElement('div');
-		label.className = 'hh-viewer-label';
-		root.append(label);
-		document.body.appendChild(root);
-		// 전체 화면이 풀리면(Esc 포함) 뷰어도 닫기 → Esc 한 번으로 끝
-		document.addEventListener('fullscreenchange', () => {
-			if (!document.fullscreenElement && isOpen() && root.dataset.fs === '1') close();
-		});
-	}
-
-	function flash(text, ms = 2200) {
-		if (!label) return;
-		label.textContent = text;
-		label.classList.add('show');
-		clearTimeout(labelTimer);
-		labelTimer = setTimeout(() => label.classList.remove('show'), ms);
-	}
-
-	function favOf(id) {
-		return getFavGalleries().find((g) => g.id === id) || null;
-	}
-	function titleOf(id) {
-		const g = favOf(id);
-		return g ? koreanTitle(g.title || '') || id : id;
-	}
-	function totalOf(id) {
-		return pagesOf({ id, pages: favOf(id)?.pages || 0 });
-	}
-
-	function makeFrame(id) {
-		const f = document.createElement('iframe');
-		f.className = 'hh-viewer-frame spare';
-		f.dataset.id = id;
-		f.src = galleryUrl(id);
-		f.addEventListener('load', () => {
-			f.hhLoaded = true;
-			if (f === frame) activate(f);
-		});
-		root.append(f);
-		// 페이지 수 (마지막 장 판정용) 미리 확보
-		if (!getPageCounts()[id]) fetchGalleryMeta(id).then((info) => rememberPages(id, info.pages)).catch(() => {});
-		return f;
-	}
-
-	// 프레임에 리더 기능 붙이기 (보는 프레임이 될 때 1번)
-	function activate(f) {
-		if (!f.hhLoaded || f.hhActive) return;
-		let win;
-		let doc;
-		try {
-			win = f.contentWindow;
-			doc = f.contentDocument;
-		} catch {}
-		// 프레임으로 못 띄우는 경우(차단/오류) → 새 탭으로 대체
-		if (!doc || !win || !/\/reader\//.test(win.location.pathname)) {
-			const id = f.dataset.id;
-			close();
-			if (typeof GM_openInTab === 'function') GM_openInTab(galleryUrl(id), { active: true, insert: true });
-			else window.open(galleryUrl(id), '_blank');
-			return;
-		}
-		f.hhActive = true;
-		const id = f.dataset.id;
-		const head = doc.head || doc.documentElement;
-		head.appendChild(Object.assign(doc.createElement('style'), { textContent: READER_FRAME_CSS }));
-		// 이미지 미리 받기 (페이지 컨텍스트에 주입)
-		const s = doc.createElement('script');
-		s.textContent = `(${hitomiPrefetch})(${JSON.stringify(IMG_DOMAIN)});`;
-		head.appendChild(s);
-		s.remove();
-		setupReaderNav(win, {
-			inFrame: true,
-			onClose: close,
-			onEnd: next,
-			total: () => totalOf(id),
-		});
-		setupReaderSlide(win);
-		// 뷰어 전용 키: Esc 닫기 / F 즐겨찾기
-		doc.addEventListener('keydown', (e) => {
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				close();
-				return;
-			}
-			if ((e.key === 'f' || e.key === 'F' || e.key === 'ㄹ') && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
-				e.preventDefault();
-				const g = favOf(id);
-				const on = toggleFavGallery(g || { id, title: titleOf(id), url: galleryUrl(id), thumb: null, artists: [] });
-				flash(on ? '★ 즐겨찾기됨' : '☆ 즐겨찾기 해제');
-			}
-		});
-		markVisited(id);
-		win.focus();
-	}
-
-	function markVisited(id) {
-		try {
-			const visited = JSON.parse(localStorage.getItem('hitomi') || '[]');
-			const url = galleryUrl(id);
-			if (!visited.includes(url)) {
-				visited.push(url);
-				localStorage.setItem('hitomi', JSON.stringify(visited));
-			}
-		} catch {}
-	}
-
-	// idx 위치의 작품을 보이게 (미리 열어 둔 프레임이 있으면 그대로 사용)
-	function show() {
-		const id = queue[idx];
-		const old = frame;
-		if (spare && spare.dataset.id === id) {
-			frame = spare;
-			spare = null;
-		} else {
-			frame = makeFrame(id);
-		}
-		frame.classList.remove('spare');
-		if (old && old !== frame) old.remove();
-		if (frame.hhLoaded) activate(frame);
-		const ep = queue.length > 1 ? ` · ${idx + 1}/${queue.length}편` : '';
-		const pages = totalOf(id);
-		flash(`${titleOf(id)}${ep}${pages ? ` · ${pages}p` : ''}  —  Esc 닫기`);
-		preload();
-	}
-
-	function preload() {
-		const { preload: on } = getViewerSettings();
-		const target = on ? queue[idx + 1] || nextUnitId : null;
-		if (spare && spare.dataset.id === target) return;
-		spare?.remove();
-		spare = null;
-		// 보는 프레임이 어느 정도 뜬 뒤에 시작 (대역폭 양보)
-		if (target) {
-			setTimeout(() => {
-				if (!root || spare || (isOpen() && queue[idx + 1] !== target && nextUnitId !== target)) return;
-				spare = makeFrame(target);
-			}, 3000);
-		}
-	}
-
-	function next() {
-		if (idx + 1 < queue.length) {
-			idx++;
-			show();
-		} else {
-			flash('마지막 장입니다  —  Esc 닫기');
-		}
-	}
-
-	// ids: 볼 갤러리 ID 목록 (시리즈 이어 보기면 전 편), nextId: 사이드바 다음 작품
-	function open(ids, nextId) {
-		if (!ids.length) return;
-		ensureRoot();
-		queue = ids;
-		idx = 0;
-		nextUnitId = nextId || null;
-		const { fullscreen } = getViewerSettings();
-		root.classList.remove('closed');
-		document.documentElement.classList.add('hh-viewer-open');
-		root.dataset.fs = '0';
-		if (fullscreen && root.requestFullscreen) {
-			root
-				.requestFullscreen()
-				.then(() => (root.dataset.fs = '1'))
-				.catch(() => {});
-		}
-		show();
-	}
-
-	function close() {
-		if (!isOpen()) return;
-		root.classList.add('closed');
-		document.documentElement.classList.remove('hh-viewer-open');
-		root.dataset.fs = '0';
-		if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-		frame?.remove(); // 메모리 정리 (미리 열어 둔 다음 작품 프레임은 남겨 둠 → 클릭하면 바로 표시)
-		frame = null;
-		label?.classList.remove('show');
-		window.focus();
-	}
-
-	return { open, close, isOpen };
-})();
+// 이전 버전(v7.41~7.44) 즐겨찾기 전체 화면 리더 설정 정리
+try {
+	localStorage.removeItem('hitomi_viewer_settings');
+} catch {}
 });
