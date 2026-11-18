@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.34
+// @version      7.35
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -2592,7 +2592,7 @@ function setupKeyHints() {
 				['- +', '속도'], ['⌘A', '작품 정보'], [',', '설정'],
 			]
 		: [
-				['A', '이전'], ['D', '다음'], ['S', '닫기'], [']', '즐겨찾기'], ['W', '전부 열기'], ['E', '연두 열기'],
+				['A', '이전'], ['D', '다음'], ['S', '닫기'], [']', '즐겨찾기'], ['W', '전부 열기'], ['E', '연두 열기'], ['R', '랜덤 5'],
 				['⌘A', '미방문 열기'], ['⌘클릭', '새 탭'], ['Space', '제목 제외'], ['⌘K', '검색'], [',', '설정'],
 			];
 	const box = document.createElement('div');
@@ -2825,6 +2825,16 @@ document.addEventListener('keydown', async (e) => {
 		e.preventDefault();
 		if (e.repeat) return;
 		openCardsInBackground({ onlyHighlighted: true });
+		return;
+	}
+
+	// R: 즐겨찾기에서 랜덤 5개 열기 (사이드바 '랜덤 5' 버튼과 동일 — 버튼이 있으면 결과도 버튼에 표시)
+	if (e.key === 'r' || e.key === 'R' || e.key === 'ㄱ') {
+		e.preventDefault();
+		if (e.repeat) return;
+		const btn = document.querySelector('#hh-favbar .fb-random');
+		if (btn) btn.click();
+		else openRandomFavs(5);
 		return;
 	}
 
@@ -3634,7 +3644,7 @@ function setupFavSidebar() {
 		type: 'button',
 		className: 'fb-random',
 		textContent: '랜덤 5',
-		title: '즐겨찾기에서 무작위 5개 열기 (시리즈는 전 편, 1개로 계산)\n새로고침 전까지 이미 연 것은 제외 · 다 열면 처음부터',
+		title: '즐겨찾기에서 무작위 5개 열기 ( R ) (시리즈는 전 편, 1개로 계산)\n새로고침 전까지 이미 연 것은 제외 · 다 열면 처음부터',
 		onclick: () => {
 			const { units, tabs, left, reset } = openRandomFavs(5);
 			randomBtn.textContent = !units ? '없음' : `${reset ? '처음부터 · ' : ''}${tabs}탭 · 남은 ${left}`;
