@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.40.1
+// @version      1.41.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.40.1';
+  const SCRIPT_VERSION = '1.41.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -137,6 +137,8 @@
 
       /* 빠른 검색 버튼: 현재 검색어와 일치하면 강조 */
       #navi .uw-qs.uw-qs-on { color: #ff5a5a !important; border-color: #ff5a5a !important; }
+      /* 볼 새 글이 있는 버튼: 연두색 글씨 */
+      #navi .uw-qs.uw-has-new { color: #9be15d !important; }
 
       /* 영상 탭 토글: 더블탭 확대 지연 제거 */
       video { touch-action: manipulation; }
@@ -242,6 +244,7 @@
 
     // 최근: 웃긴자료에서 마지막으로 읽은 글의 바로 다음(더 최신) 글로 이동 — 밀린 글 이어 읽기
     const recentBtn = navBtn('최근', '#', false);
+    recentBtn.dataset.uwNewKey = NEW_KEY_RECENT;
     recentBtn.addEventListener('click', (e) => {
       e.preventDefault();
       goNextUnread(recentBtn);
@@ -251,13 +254,17 @@
     // 게시판 버튼(현재 게시판 제외)
     for (const b of NAVI_BOARDS) {
       if (b.table === table) continue;
-      bar.appendChild(navBtn(b.label, `/board/list.html?table=${b.table}`, false));
+      const bb = navBtn(b.label, `/board/list.html?table=${b.table}`, false);
+      if (b.table !== RECENT_TABLE) bb.dataset.uwNewKey = listKey(b.table, ''); // 웃자는 '최근'이 담당
+      bar.appendChild(bb);
     }
 
     // ㅇㅎ / ㅎㅂ
     const currentSk = currentRawSk().toUpperCase();
     for (const { label, sk } of QUICK_SEARCH_KEYWORDS) {
-      bar.appendChild(navBtn(label, buildSearchUrl(sk), currentSk === sk.toUpperCase()));
+      const qb = navBtn(label, buildSearchUrl(sk), currentSk === sk.toUpperCase());
+      qb.dataset.uwNewKey = listKey(SEARCH_TABLE, sk);
+      bar.appendChild(qb);
     }
 
     // 검색 버튼 → 검색 팝업
@@ -279,6 +286,7 @@
     }
 
     root.appendChild(bar);
+    applyNewMarks(); // 저장된 새 글 여부를 바로 표시(깜빡임 없이), 최신 확인은 페이지 로드 후
 
     // 버전: 메뉴 줄 오른쪽 끝에 고정(버튼이 많아 가로 스크롤돼도 항상 보이게 메뉴 밖에 겹쳐 둠)
     if (SHOW_VERSION) {
@@ -567,7 +575,9 @@
   function recordLastRead() {
     if (!isRead || table !== RECENT_TABLE) return;
     const n = params.get('number');
-    if (n) { try { localStorage.setItem(RECENT_KEY, n); } catch {} }
+    if (n) {
+      try { localStorage.setItem(RECENT_KEY, n); localStorage.removeItem(`uw-new:${NEW_KEY_RECENT}`); } catch {}
+    }
   }
 
   async function goNextUnread(btn) {
@@ -698,6 +708,110 @@
       toggleSearchPanel(); // 클릭 핸들러 안에서 바로 focus(모바일 키보드)
     });
     document.body.appendChild(fab);
+  }
+
+  /* ── 새 글 표시(연두색) ──
+   *  - 최근: 마지막으로 읽은 웃긴자료 글 뒤에 더 최신 글이 있으면.
+   *  - 대자·얼인·패션·ㅇㅎ·ㅎㅂ: 그 목록(1페이지)을 마지막으로 본 뒤 새로 올라온 글이 있으면.
+   *    각 목록의 필터·작성자 차단·ai 숨김 규칙을 그대로 적용해서 "보일 글"만 셈.
+   *  - "본 것"의 기준: 그 목록 1페이지를 열었을 때 가장 최신 글 번호를 저장.
+   *  - 확인은 페이지 로드 후 백그라운드로, 목록별 NEW_CHECK_TTL마다 최대 1회(결과는 저장해서 즉시 표시).
+   */
+  const NEW_KEY_RECENT = 'recent';
+  const NEW_CHECK_TTL = 3 * 60 * 1000;
+  const listKey = (t, sk) => `${t}|${String(sk || '').toUpperCase()}`;
+  const store2 = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  };
+
+  function applyNewMarks() {
+    for (const a of document.querySelectorAll('uw-navi a[data-uw-new-key]')) {
+      const st = store2.get(`uw-new:${a.dataset.uwNewKey}`);
+      a.querySelector('span')?.classList.toggle('uw-has-new', !!st?.has);
+    }
+  }
+
+  async function fetchDoc(url) {
+    const res = await fetch(url, { credentials: 'include' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = await res.arrayBuffer();
+    let html;
+    try { html = new TextDecoder('euc-kr').decode(buf); } catch { html = new TextDecoder().decode(buf); }
+    return new DOMParser().parseFromString(html, 'text/html');
+  }
+
+  // 다른 게시판 목록의 글이 그 게시판 규칙상 보이는 글인지(필터·차단·ai 숨김)
+  function blockedNicksFor(t) {
+    let raw = null;
+    try { raw = localStorage.getItem(`uw-blocked-nicks:${t}`) ?? localStorage.getItem('uw-blocked-nicks'); } catch {}
+    try { return new Set((JSON.parse(raw || '[]')).map((n) => String(n).trim()).filter(Boolean)); } catch { return new Set(); }
+  }
+  function rowVisibleFor(el, t, hideAi, blocked) {
+    const title = (el.querySelector('.link_hover')?.textContent || el.querySelector('a[href*="read.html"]')?.textContent || '').trim();
+    if (blocked.size && blocked.has(rowNick(el))) return false;
+    if (hideAi && /ai/i.test(title)) return false;
+    const rule = TABLE_FILTERS[t];
+    if (!rule) return true;
+    const ok = countDigits(el.querySelector('.ok_num')?.textContent || '');
+    return rule.exemptKeywords.some((k) => title.includes(k)) || ok > rule.threshold;
+  }
+
+  // 목록 1페이지를 열었을 때: 가장 최신 글 번호를 "본 것"으로 저장, 새 글 표시 끄기
+  function recordListSeen() {
+    if (!isList || getPg(location.href) !== 1) return;
+    let max = 0;
+    for (const el of document.querySelectorAll('.post_item')) max = Math.max(max, Number(postNum(el)) || 0);
+    if (!max) return;
+    const sk = (location.search.match(/[?&]sk=([^&#]*)/) || [])[1] || '';
+    const key = listKey(table, sk);
+    const prev = Number(store2.get(`uw-seen:${key}`)) || 0;
+    if (max > prev) store2.set(`uw-seen:${key}`, max);
+    store2.set(`uw-new:${key}`, { at: Date.now(), has: false });
+    applyNewMarks();
+  }
+
+  async function checkListNew(key) {
+    const [t, sk] = key.split('|');
+    const seen = Number(store2.get(`uw-seen:${key}`)) || 0;
+    if (!seen) return false; // 한 번도 안 본 목록은 기준이 없어 표시 안 함
+    const url = sk ? `/board/list.html?table=${t}&st=subject&searchday=${SEARCH_DAY}&sk=${sk}`
+                   : `/board/list.html?table=${t}`;
+    const doc = await fetchDoc(url);
+    const blocked = blockedNicksFor(t);
+    const hideAi = hideAiFor(url);
+    for (const el of doc.querySelectorAll('.post_item')) {
+      const n = Number(postNum(el)) || 0;
+      if (n > seen && rowVisibleFor(el, t, hideAi, blocked)) return true;
+    }
+    return false;
+  }
+
+  async function checkRecentNew() {
+    let last = null;
+    try { last = localStorage.getItem(RECENT_KEY); } catch {}
+    if (!last) return false;
+    const doc = await fetchDoc(`/board/read.html?table=${RECENT_TABLE}&number=${encodeURIComponent(last)}`);
+    return [...doc.querySelectorAll('li.next_prev_li')]
+      .some((li) => (li.querySelector('.btn')?.textContent || '').includes('다음글'));
+  }
+
+  async function refreshNewMarks() {
+    const keys = [...new Set([...document.querySelectorAll('uw-navi a[data-uw-new-key]')].map((a) => a.dataset.uwNewKey))];
+    for (const key of keys) {
+      const st = store2.get(`uw-new:${key}`);
+      if (st && Date.now() - st.at < NEW_CHECK_TTL) continue;
+      try {
+        const has = key === NEW_KEY_RECENT ? await checkRecentNew() : await checkListNew(key);
+        store2.set(`uw-new:${key}`, { at: Date.now(), has });
+        applyNewMarks();
+      } catch {}
+    }
+  }
+
+  function initNewMarks() {
+    const run = () => setTimeout(refreshNewMarks, 1500); // 페이지가 다 뜬 뒤 백그라운드로
+    if (document.readyState === 'complete') run(); else window.addEventListener('load', run, { once: true });
   }
 
   /* ──────────────────────────────────────────────────────────
@@ -1802,6 +1916,7 @@
 
   function saveNavList() {
     if (!isList) return;
+    recordListSeen();
     const searching = /[?&]sk=[^&]/.test(location.search);
     if (!filterRule && !searching && blockedNicks().size === 0) { // 필터·검색·차단 모두 없으면 사이트 기본 순서와 같음
       try { sessionStorage.removeItem(NAV_KEY(table)); } catch {}
@@ -2209,6 +2324,7 @@
   watchNavi();
   initLoadMore();
   initHeaderBarFix();
+  initNewMarks();
   initInactivePause();
   recordLastRead();
   window.addEventListener('resize', () => { if (document.body) dedupeNavBlocks(); }, { passive: true });
