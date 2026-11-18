@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.41.0
+// @version      1.42.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.41.0';
+  const SCRIPT_VERSION = '1.42.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -255,7 +255,7 @@
     for (const b of NAVI_BOARDS) {
       if (b.table === table) continue;
       const bb = navBtn(b.label, `/board/list.html?table=${b.table}`, false);
-      if (b.table !== RECENT_TABLE) bb.dataset.uwNewKey = listKey(b.table, ''); // 웃자는 '최근'이 담당
+      if (b.table !== RECENT_TABLE) { bb.dataset.uwNewKey = listKey(b.table, ''); bindUnreadJump(bb); } // 웃자는 '최근'이 담당
       bar.appendChild(bb);
     }
 
@@ -264,6 +264,7 @@
     for (const { label, sk } of QUICK_SEARCH_KEYWORDS) {
       const qb = navBtn(label, buildSearchUrl(sk), currentSk === sk.toUpperCase());
       qb.dataset.uwNewKey = listKey(SEARCH_TABLE, sk);
+      bindUnreadJump(qb);
       bar.appendChild(qb);
     }
 
@@ -714,7 +715,8 @@
    *  - 최근: 마지막으로 읽은 웃긴자료 글 뒤에 더 최신 글이 있으면.
    *  - 대자·얼인·패션·ㅇㅎ·ㅎㅂ: 그 목록(1페이지)을 마지막으로 본 뒤 새로 올라온 글이 있으면.
    *    각 목록의 필터·작성자 차단·ai 숨김 규칙을 그대로 적용해서 "보일 글"만 셈.
-   *  - "본 것"의 기준: 그 목록 1페이지를 열었을 때 가장 최신 글 번호를 저장.
+   *  - "읽은 위치": 그 목록에서 연 글 중 마지막으로 읽은 글(처음엔 목록 1페이지를 연 시점의 최신 글).
+   *    연두색 버튼을 누르면 안 읽은 가장 오래된 글로 바로 이동(goListUnread).
    *  - 확인은 페이지 로드 후 백그라운드로, 목록별 NEW_CHECK_TTL마다 최대 1회(결과는 저장해서 즉시 표시).
    */
   const NEW_KEY_RECENT = 'recent';
@@ -724,6 +726,15 @@
     get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
   };
+
+  // 연두색(새 글 있음)일 때 누르면 안 읽은 가장 오래된 글로, 아니면 원래대로 목록으로
+  function bindUnreadJump(a) {
+    a.addEventListener('click', (e) => {
+      if (!a.querySelector('.uw-has-new')) return;
+      e.preventDefault();
+      goListUnread(a.dataset.uwNewKey, a);
+    });
+  }
 
   function applyNewMarks() {
     for (const a of document.querySelectorAll('uw-navi a[data-uw-new-key]')) {
@@ -765,10 +776,77 @@
     if (!max) return;
     const sk = (location.search.match(/[?&]sk=([^&#]*)/) || [])[1] || '';
     const key = listKey(table, sk);
-    const prev = Number(store2.get(`uw-seen:${key}`)) || 0;
-    if (max > prev) store2.set(`uw-seen:${key}`, max);
-    store2.set(`uw-new:${key}`, { at: Date.now(), has: false });
-    applyNewMarks();
+    // 처음 연 목록만 기준점 설정(이후엔 글을 읽을 때 갱신 → 목록만 열어선 '읽음' 처리 안 함)
+    if (store2.get(`uw-seen:${key}`) == null) {
+      store2.set(`uw-seen:${key}`, max);
+      store2.set(`uw-new:${key}`, { at: Date.now(), has: false });
+      applyNewMarks();
+    }
+  }
+
+  const keyFromUrl = (url) => listKey(
+    (String(url).match(/[?&]table=([^&#]*)/) || [])[1] || '',
+    (String(url).match(/[?&]sk=([^&#]*)/) || [])[1] || '');
+
+  // 목록에서 연 글을 읽으면 그 목록의 "마지막으로 읽은 글"로 기록
+  function recordListProgress(listUrl, num) {
+    const key = keyFromUrl(listUrl);
+    if (!key.split('|')[0] || !Number(num)) return;
+    store2.set(`uw-seen:${key}`, Number(num));
+    try { localStorage.removeItem(`uw-new:${key}`); } catch {} // 다음 확인 때 다시 계산
+  }
+
+  /* ── 안 읽은 가장 오래된 글로 이동 (대자·얼인·패션·ㅇㅎ·ㅎㅂ, 연두색일 때) ──
+   *  목록을 1페이지부터 받아 그 목록 규칙(필터·차단·ai 숨김)으로 보이는 글을 모으다가,
+   *  마지막으로 읽은 글(번호 이하)에 닿으면 그 바로 앞(=안 읽은 글 중 가장 오래된 글)으로 이동.
+   *  모은 목록은 이전글·다음글 순서로 저장 → 그 글에서 ▲ 다음글로 최신까지 이어 읽기.
+   */
+  const UNREAD_MAX_PAGES = 10;
+
+  async function goListUnread(key, btn) {
+    const [t, sk] = key.split('|');
+    const listUrl = new URL(sk
+      ? `/board/list.html?table=${t}&st=subject&searchday=${SEARCH_DAY}&sk=${sk}`
+      : `/board/list.html?table=${t}`, location.href).href;
+    const seen = Number(store2.get(`uw-seen:${key}`)) || 0;
+    if (!seen) { location.href = listUrl; return; }
+
+    const span = btn?.querySelector('span');
+    const label = span?.textContent;
+    if (span) span.textContent = '…';
+    try {
+      const blocked = blockedNicksFor(t);
+      const hideAi = hideAiFor(listUrl);
+      const items = [];
+      let pageLinks = {};
+      let lastPg = 1;
+      let target = -1; // 안 읽은 가장 오래된 글의 items 인덱스
+      let boundary = false;
+      for (let pg = 1; pg <= UNREAD_MAX_PAGES; pg++) {
+        const url = pg === 1 ? listUrl : (pageLinks[String(pg)] || setPg(listUrl, pg));
+        const doc = await fetchDoc(url);
+        const rows = [...doc.querySelectorAll('.post_item')];
+        if (!rows.length) break;
+        pageLinks = { ...collectPageLinks(doc, url), ...pageLinks };
+        lastPg = pg;
+        let reached = false;
+        for (const el of rows) {
+          if (!rowVisibleFor(el, t, hideAi, blocked)) continue;
+          const it = rowToItem(el, url, t);
+          if (!it || items.some((x) => x.n === it.n)) continue;
+          if (!reached && Number(it.n) <= seen) { reached = true; boundary = true; target = items.length - 1; }
+          items.push(it); // 경계 페이지는 끝까지 모아 둠(▼ 이전글 연결용)
+        }
+        if (reached) break;
+      }
+      if (!boundary) target = items.length - 1; // 경계 못 찾음(최대 페이지 초과) → 받은 것 중 가장 오래된 글
+      if (target < 0) { location.href = listUrl; return; } // 안 읽은 글 없음 → 목록으로
+      saveNavCtx({ at: Date.now(), listUrl, firstPg: 1, lastPg, pageLinks, items }, t);
+      location.href = items[target].href;
+    } catch {
+      if (span) span.textContent = label;
+      location.href = listUrl;
+    }
   }
 
   async function checkListNew(key) {
@@ -1885,14 +1963,14 @@
     return filterRule.exemptKeywords.some((k) => rowTitle(el).includes(k)) || ok > filterRule.threshold;
   }
 
-  function rowToItem(el, baseUrl) {
+  function rowToItem(el, baseUrl, t = table) {
     const n = postNum(el);
     if (!n) return null;
     // 일반 목록은 행 링크가 read.html이 아닐 수 있음(스크립트 클릭 방식) → 번호로 주소 생성
     const a = el.querySelector('a[href*="read.html"]');
     const href = a
       ? new URL(a.getAttribute('href'), baseUrl).href
-      : new URL(`/board/read.html?table=${encodeURIComponent(table)}&number=${n}`, baseUrl).href;
+      : new URL(`/board/read.html?table=${encodeURIComponent(t)}&number=${n}`, baseUrl).href;
     const txt = (sel) => el.querySelector(sel)?.textContent.trim() || '';
     return {
       n: String(n),
@@ -1936,8 +2014,8 @@
     saveNavCtx({ at: Date.now(), listUrl, firstPg, lastPg, pageLinks, items });
   }
 
-  function saveNavCtx(ctx) {
-    try { sessionStorage.setItem(NAV_KEY(table), JSON.stringify(ctx)); } catch {}
+  function saveNavCtx(ctx, t = table) {
+    try { sessionStorage.setItem(NAV_KEY(t), JSON.stringify(ctx)); } catch {}
   }
   function loadNavList() {
     try { return JSON.parse(sessionStorage.getItem(NAV_KEY(table)) || 'null'); } catch { return null; }
@@ -2047,6 +2125,7 @@
     const cur = params.get('number');
     document.documentElement.dataset.uwNav = '1';
     if (!ctx?.items || ctx.items.findIndex((it) => it.n === cur) < 0) return; // 목록에 없는 글 → 기본 동작 유지
+    recordListProgress(ctx.listUrl, cur); // 이 목록에서 마지막으로 읽은 글 = 지금 글
     ctx.firstPg ||= 1; ctx.lastPg ||= ctx.firstPg;
 
     const idxOf = () => ctx.items.findIndex((it) => it.n === cur);
