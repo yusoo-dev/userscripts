@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.44.1
+// @version      1.44.2
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.44.1';
+  const SCRIPT_VERSION = '1.44.2';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -830,12 +830,12 @@
    *    각 목록의 필터·작성자 차단·ai 숨김 규칙을 그대로 적용해서 "보일 글"만 셈.
    *  - "읽은 위치": 그 목록에서 연 글 중 마지막으로 읽은 글(처음엔 목록 1페이지를 연 시점의 최신 글).
    *    연두색 버튼을 누르면 안 읽은 가장 오래된 글로 바로 이동(goListUnread).
-   *  - 확인은 페이지 로드 후 백그라운드로, 목록별 NEW_CHECK_TTL마다 최대 1회(결과는 저장해서 즉시 표시).
+   *  - 확인은 페이지 내용 준비 직후 백그라운드로, 목록별 NEW_CHECK_TTL(1분)마다 최대 1회(결과는 저장해서 즉시 표시).
    */
   const AI_RE = /(^|[^a-z])ai($|[^a-z])/i;
   const NEW_KEY_RECENT = 'recent';
   const NEW_MARK_EXCLUDE = ['pds', 'pdswait']; // 연두색 표시를 하지 않는 게시판 버튼(웃자·대자)
-  const NEW_CHECK_TTL = 3 * 60 * 1000;
+  const NEW_CHECK_TTL = 60 * 1000; // 목록별 확인 간격(페이지를 넘겨도 이 간격 안에서는 저장된 결과 사용)
   const listKey = (t, sk) => `${t}|${String(sk || '').toUpperCase()}`;
   const store2 = {
     get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } },
@@ -1009,9 +1009,17 @@
     }
   }
 
+  // 확인 시점: 페이지 내용(DOM)이 준비되면 바로(이미지·영상 로딩 완료를 기다리지 않음).
+  //  예전엔 'load'(모든 이미지·영상 로딩 완료) 이후에 확인해서, 영상 많은 글을 빠르게 넘기면
+  //  확인이 한 번도 안 돌아 새 글 표시가 늦거나 안 켜졌음.
+  //  머무는 동안에도 NEW_CHECK_TTL마다 다시 확인.
   function initNewMarks() {
-    const run = () => setTimeout(refreshNewMarks, 1500); // 페이지가 다 뜬 뒤 백그라운드로
-    if (document.readyState === 'complete') run(); else window.addEventListener('load', run, { once: true });
+    const run = () => {
+      setTimeout(refreshNewMarks, 600);
+      setInterval(() => { if (!document.hidden) refreshNewMarks(); }, NEW_CHECK_TTL);
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once: true });
+    else run();
   }
 
   /* ──────────────────────────────────────────────────────────
