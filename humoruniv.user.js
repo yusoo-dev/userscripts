@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.43.0
+// @version      1.44.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.43.0';
+  const SCRIPT_VERSION = '1.44.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -473,7 +473,14 @@
       const cancel = mk('취소', '#555');
       const ok = mk('확인', '#ff5a5a');
       row.append(cancel, ok);
-      box.append(title, hint, ta, row);
+      const backupLink = el('button', {
+        display: 'block', 'align-self': 'flex-end', height: '28px', padding: '0 4px', background: 'transparent',
+        color: '#8ab4f8', 'font-size': '12px', 'text-decoration': 'underline', cursor: 'pointer',
+      });
+      backupLink.type = 'button';
+      backupLink.textContent = '설정 백업 · 복원';
+      backupLink.addEventListener('click', () => { close(); openBackupModal(); });
+      box.append(title, hint, ta, row, backupLink);
       backdrop.appendChild(box);
       document.body.appendChild(backdrop);
 
@@ -492,6 +499,91 @@
     blockModal.ta.value = [...blockedNicks()].join('\n');
     css(blockModal.backdrop, { display: 'flex' });
     blockModal.ta.focus();
+  }
+
+  /* ── 설정 백업 · 복원 ──
+   *  차단 목록, 읽은 위치·읽은 글, 새 글 기준, [최근] 기록을 한 덩어리 텍스트(JSON)로 내보내고 가져옴.
+   *  다른 기기·브라우저로 옮기거나 브라우저 데이터 삭제에 대비.
+   */
+  const BACKUP_PREFIXES = ['uw-blocked-nicks', 'uw-seen:', 'uw-read:', 'uw-last-read:'];
+
+  function exportSettings() {
+    const data = {};
+    try {
+      for (const k of Object.keys(localStorage)) {
+        if (BACKUP_PREFIXES.some((p) => k.startsWith(p))) data[k] = localStorage.getItem(k);
+      }
+    } catch {}
+    return JSON.stringify({ app: 'uw-humoruniv', v: 1, at: new Date().toISOString(), data });
+  }
+
+  function importSettings(text) {
+    const obj = JSON.parse(text);
+    if (obj?.app !== 'uw-humoruniv' || typeof obj.data !== 'object') throw new Error('형식이 맞지 않아요');
+    let n = 0;
+    for (const [k, v] of Object.entries(obj.data)) {
+      if (!BACKUP_PREFIXES.some((p) => k.startsWith(p)) || typeof v !== 'string') continue;
+      localStorage.setItem(k, v);
+      n++;
+    }
+    for (const k of Object.keys(localStorage)) if (k.startsWith('uw-new:')) localStorage.removeItem(k); // 새 글 표시 재계산
+    blockedCache = null;
+    return n;
+  }
+
+  function openBackupModal() {
+    const backdrop = el('uw-backup', {
+      display: 'flex', position: 'fixed', inset: '0', 'z-index': '2147483000',
+      background: 'rgba(0,0,0,.6)', 'align-items': 'flex-start', 'justify-content': 'center', 'padding-top': '10vh',
+    });
+    const box = el('div', {
+      display: 'flex', 'flex-direction': 'column', gap: '8px', width: 'min(92vw, 420px)',
+      padding: '12px', background: '#2a2a2a', 'border-radius': '12px', 'box-shadow': '0 8px 30px rgba(0,0,0,.5)',
+    });
+    const title = el('div', { display: 'block', color: '#eee', 'font-size': '15px', 'font-weight': 'bold' });
+    title.textContent = '설정 백업 · 복원';
+    const hint = el('div', { display: 'block', color: '#999', 'font-size': '12px', 'line-height': '1.4' });
+    hint.textContent = '복사한 내용을 메모장 등에 보관하세요. 복원하려면 보관한 내용을 붙여넣고 [가져오기]를 누르세요.';
+    const ta = el('textarea', {
+      display: 'block', width: '100%', height: '180px', padding: '8px', 'border-radius': '8px',
+      border: '1px solid #555', background: '#1b1b1b', color: '#ddd', 'font-size': '12px',
+      'font-family': 'monospace', outline: 'none', resize: 'vertical',
+    });
+    ta.value = exportSettings();
+    const row = el('div', { display: 'flex', gap: '8px' });
+    const mk = (label, bg) => {
+      const b = el('button', {
+        display: 'block', flex: '1 1 auto', height: '42px', 'border-radius': '8px',
+        background: bg, color: '#fff', 'font-size': '14px', 'font-weight': 'bold', cursor: 'pointer',
+      });
+      b.type = 'button'; b.textContent = label;
+      return b;
+    };
+    const copy = mk('복사', '#555');
+    const imp = mk('가져오기', '#ff5a5a');
+    const close = mk('닫기', '#444');
+    row.append(copy, imp, close);
+    box.append(title, hint, ta, row);
+    backdrop.appendChild(box);
+    document.body.appendChild(backdrop);
+
+    copy.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(ta.value); }
+      catch { ta.select(); document.execCommand('copy'); }
+      copy.textContent = '복사됨 ✓';
+    });
+    imp.addEventListener('click', () => {
+      try {
+        const n = importSettings(ta.value.trim());
+        imp.textContent = `${n}개 항목 복원 ✓`;
+        setTimeout(() => location.reload(), 600);
+      } catch (e) {
+        imp.textContent = '형식 오류';
+        setTimeout(() => { imp.textContent = '가져오기'; }, 1500);
+      }
+    });
+    close.addEventListener('click', () => backdrop.remove());
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
   }
 
   /* ── 차단 선택 모드 ──
@@ -573,7 +665,28 @@
   const RECENT_TABLE = 'pds';
   const RECENT_KEY = `uw-last-read:${RECENT_TABLE}`;
 
+  /* 읽은 글 번호 모음(게시판별). 어느 목록에서 읽었든 같은 글이면 다른 목록(대자↔ㅇㅎ·ㅎㅂ)에서도 읽음으로 침. */
+  const READ_SET_MAX = 3000;
+  const readSetKey = (t) => `uw-read:${t}`;
+  function readSetFor(t) {
+    try { return new Set(JSON.parse(localStorage.getItem(readSetKey(t)) || '[]').map(String)); } catch { return new Set(); }
+  }
+  function markRead(t, n) {
+    if (!t || !n) return;
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem(readSetKey(t)) || '[]').map(String); } catch {}
+    if (arr.includes(String(n))) return;
+    arr.push(String(n));
+    if (arr.length > READ_SET_MAX) arr = arr.slice(-READ_SET_MAX);
+    try {
+      localStorage.setItem(readSetKey(t), JSON.stringify(arr));
+      // 이 게시판 관련 새 글 표시를 다시 계산하도록 무효화
+      for (const k of Object.keys(localStorage)) if (k.startsWith(`uw-new:${t}|`)) localStorage.removeItem(k);
+    } catch {}
+  }
+
   function recordLastRead() {
+    if (isRead && table) markRead(table, params.get('number'));
     if (!isRead || table !== RECENT_TABLE) return;
     const n = params.get('number');
     if (n) {
@@ -718,6 +831,7 @@
    *    연두색 버튼을 누르면 안 읽은 가장 오래된 글로 바로 이동(goListUnread).
    *  - 확인은 페이지 로드 후 백그라운드로, 목록별 NEW_CHECK_TTL마다 최대 1회(결과는 저장해서 즉시 표시).
    */
+  const AI_RE = /(^|[^a-z])ai($|[^a-z])/i;
   const NEW_KEY_RECENT = 'recent';
   const NEW_CHECK_TTL = 3 * 60 * 1000;
   const listKey = (t, sk) => `${t}|${String(sk || '').toUpperCase()}`;
@@ -764,7 +878,7 @@
   function rowVisibleFor(el, t, hideAi, blocked) {
     const title = (el.querySelector('.link_hover')?.textContent || el.querySelector('a[href*="read.html"]')?.textContent || '').trim();
     if (blocked.size && blocked.has(rowNick(el))) return false;
-    if (hideAi && /ai/i.test(title)) return false;
+    if (hideAi && AI_RE.test(title)) return false;
     const rule = TABLE_FILTERS[t];
     if (!rule) return true;
     const ok = countDigits(el.querySelector('.ok_num')?.textContent || '');
@@ -842,6 +956,9 @@
         if (reached) break;
       }
       if (!boundary) target = items.length - 1; // 경계 못 찾음(최대 페이지 초과) → 받은 것 중 가장 오래된 글
+      // 다른 목록에서 이미 읽은 글은 건너뜀(경계 위쪽에서 가장 오래된 '안 읽은' 글)
+      const read = readSetFor(t);
+      while (target >= 0 && read.has(items[target].n)) target--;
       if (target < 0) { location.href = listUrl; return; } // 안 읽은 글 없음 → 목록으로
       saveNavCtx({ at: Date.now(), listUrl, firstPg: 1, lastPg, pageLinks, items }, t);
       location.href = items[target].href;
@@ -860,9 +977,10 @@
     const doc = await fetchDoc(url);
     const blocked = blockedNicksFor(t);
     const hideAi = hideAiFor(url);
+    const read = readSetFor(t);
     for (const el of doc.querySelectorAll('.post_item')) {
       const n = Number(postNum(el)) || 0;
-      if (n > seen && rowVisibleFor(el, t, hideAi, blocked)) return true;
+      if (n > seen && !read.has(String(n)) && rowVisibleFor(el, t, hideAi, blocked)) return true;
     }
     return false;
   }
@@ -1870,7 +1988,8 @@
     return HIDE_AI_SEARCHES.some((h) => h.table === t && h.sk.toUpperCase() === sk);
   }
   const HIDE_AI_HERE = isList && hideAiFor(location.href);
-  const hasAi = (title) => /ai/i.test(title);
+  // 'ai'가 독립된 표기일 때만(AI), .ai, ai그림 등). mail·daily처럼 영어 단어 속 ai는 제외.
+  const hasAi = (title) => AI_RE.test(title);
 
   function classifyFilter(el, okEl) {
     const ok = countDigits(okEl.textContent);
