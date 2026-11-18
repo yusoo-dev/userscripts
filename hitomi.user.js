@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.33
+// @version      7.34
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -16,6 +16,16 @@
 // @connect      ltn.gold-usergeneratedcontent.net
 // @noframes
 // ==/UserScript==
+
+// 중복 실행 방지: 로더(hitomi.loader.user.js)와 본체를 함께 설치한 경우 먼저 실행된 쪽만 동작
+if (window === top) {
+	if (document.documentElement.hasAttribute('data-hh-running')) {
+		throw new Error('[HITOMI] 중복 실행 방지: 로더와 본체가 함께 설치되어 있음 — 하나만 켜 주세요');
+	}
+	document.documentElement.setAttribute('data-hh-running', '1');
+}
+// 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
+const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
 
 if (window === top) (document.head || document.documentElement).appendChild(
   Object.assign(document.createElement('style'), { textContent: ".acg,\n.imageset,\n.top-content,\n.page-container.page-top,\n.donate,\ntr:nth-child(1),\ntr:nth-child(2),\n#nozomi-link {\n  display: none !important;\n}\n\nbody,\n.navbar,\n.gallery-content,\n.page-container {\n  background-color: #474747 !important;\n  background-image: none !important;\n}\n\n.container,\n.dj,\n.container:hover,\n.dj:hover {\n  box-shadow: none !important;\n  border: none !important;\n}\n\nli, a {\n  color: #fff !important;\n  text-shadow: none !important;\n}\n\n.lillie {\n  background-color: #171717 !important;\n}\n\n.artist-list {\n  background-color: #232323 !important;\n}\n\n.dj, .manga {\n  background-color: #373737 !important;\n  height: auto !important;\n  min-height: 210px !important;\n  display: flow-root !important;\n  margin-bottom: 8px !important;\n}\n\n.dj-img-back, .date {\n  display: none !important;\n}\n\n.dj-img1, .dj-img2 {\n  transform: rotate(0) !important;\n  background-color: #000 !important;\n}\n\n.dj-img2 img {\n  transform: translate(-85px, -50%) !important;\n}\n\ntd {\n  color: #fff !important;\n}\n\n.page-container li {\n  color: #676767 !important;\n}\n\ndiv {\n  border: none !important;\n}\n\na, td {\n  font-size: 14px !important;\n}\n\np, li {\n  font-size: 11px !important;\n}" }));
@@ -270,7 +280,7 @@ html.hh-favbar-open #hh-favbar-toggle { display: none; }
 /* ---- 즐겨찾기 사이드바: 카드형 (큰 썸네일 + 제목은 아래) ----
    [총집편]·× 는 썸네일 위에 겹쳐 표시, n편·페이지 수·⚠️ 는 제목 아래 한 줄 */
 #hh-favbar .fb-items {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px 8px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px 10px;
   margin: 4px 0 0 4px; padding: 0 0 0 6px;
 }
 #hh-favbar .fb-item {
@@ -2523,7 +2533,7 @@ function handleSearchNavigation(key) {
 	// S: 탭 닫기
 	if (key === 's' || key === 'ㄴ') {
 		try {
-			window.close();
+			hhCloseTab();
 		} catch {}
 		return true;
 	}
@@ -3598,7 +3608,7 @@ function setupSettingsPanel({ corner = 'bottom' } = {}) {
 const FAVBAR_STATE_KEY = 'hitomi_favbar_state'; // { open, width, closed: [접은 작가명] } (백업 대상 아님)
 function setupFavSidebar() {
 	if (document.getElementById('hh-favbar')) return;
-	let state = { open: false, width: 300, closed: [] };
+	let state = { open: false, width: 380, closed: [] };
 	try {
 		state = { ...state, ...JSON.parse(localStorage.getItem(FAVBAR_STATE_KEY) || '{}') };
 	} catch {}
@@ -3641,12 +3651,13 @@ function setupFavSidebar() {
 	// --- 폭 조절: 왼쪽 가장자리 드래그 (더블클릭 = 기본 폭), 저장 ---
 	const MIN_W = 200;
 	const MAX_W = 720;
-	const DEFAULT_W = 300;
+	const DEFAULT_W = 380;
 	const applyWidth = (w) => {
 		const clamped = Math.round(Math.min(MAX_W, Math.max(MIN_W, w || DEFAULT_W)));
 		document.documentElement.style.setProperty('--hh-favbar-w', clamped + 'px');
 		return clamped;
 	};
+	if (!state.width || state.width < 340) state.width = DEFAULT_W; // 카드형 최소 2열 폭
 	state.width = applyWidth(state.width);
 	const resizer = h('div', { className: 'fb-resize', title: '드래그: 폭 조절 · 더블클릭: 기본 폭' });
 	bar.prepend(resizer);
@@ -4356,7 +4367,7 @@ if (!isReader) {
 		}
 
 		if (key === 's' || key === 'ㄴ') {
-			window.close();
+			hhCloseTab();
 		}
 	});
 

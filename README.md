@@ -16,3 +16,6 @@
 | 파일 | 용도 |
 |---|---|
 | [hitomi.user.js](https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js) | 본체. Violentmonkey는 이 주소로 설치하면 `@version` 증가 시 자동 업데이트 |
+| [hitomi.loader.user.js](https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.loader.user.js) | 로더(권장). 페이지를 열 때마다 GitHub 최신 커밋을 확인해 본체를 받아 실행 → 푸시하면 업데이트 확인 없이 바로 반영 |
+
+> 로더를 쓰면 Violentmonkey에 설치된 본체(hitomi.user.js)는 꺼 주세요. 둘 다 켜져 있으면 먼저 실행된 쪽만 동작합니다.
