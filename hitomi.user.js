@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.31
+// @version      7.32
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -917,6 +917,19 @@ function hitomiPrefetch(domain) {
 })();
 
 ((run) => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', run, { once: true }) : run())(() => {
+
+// === [임시] 자동 업데이트 테스트: 이 버전을 받으면 버전당 1번만 알림 ===
+(() => {
+	const KEY = 'hitomi_update_test';
+	const VER = '7.32';
+	try {
+		if (window !== top || localStorage.getItem(KEY) === VER) return;
+		localStorage.setItem(KEY, VER);
+	} catch {
+		return;
+	}
+	alert(`[HITOMI] 자동 업데이트 테스트 성공 — v${VER}`);
+})();
 
 // === 한글 태그 사전 ===
 // 우선순위: 사용자 사전(스페이스바 붙여넣기) > 자동 번역 캐시 > 기본 사전
