@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.42
+// @version      7.43
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.42';
+const HH_VERSION = '7.43';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -4416,14 +4416,39 @@ function setupReaderNav(win, opts = {}) {
 		return isNaN(n) || n < 1 ? 1 : n;
 	};
 	const spreadStart = (p) => (p <= 1 ? 1 : p % 2 === 0 ? p : p - 1);
-	function go(start) {
-		const t = total();
-		if (start <= 1) loc.hash = '#1';
-		else if (t && start + 1 > t) loc.hash = `#${start}`; // 마지막 장이 홀로 남으면 1장만
-		else loc.hash = `#${start}-${start + 1}`;
-	}
 
-	doc.addEventListener('keydown', (e) => {
+	// 아주 빠르게 누를 때: 해시를 매번 바꾸면 사이트 리더가 따라오지 못해 먹통이 됨
+	// → 목표 페이지(target)만 즉시 갱신하고, 실제 해시 변경은 MIN_GAP 간격으로 최신 목표만 반영
+	const MIN_GAP = 120;
+	let target = null; // 아직 반영 안 된 목표 펼침 시작 페이지
+	let lastApply = 0;
+	let applyTimer = null;
+	const hashFor = (start) => {
+		const t = total();
+		if (start <= 1) return '#1';
+		if (t && start + 1 > t) return `#${start}`; // 마지막 장이 홀로 남으면 1장만
+		return `#${start}-${start + 1}`;
+	};
+	function apply() {
+		applyTimer = null;
+		if (target == null) return;
+		const h = hashFor(target);
+		target = null;
+		lastApply = Date.now();
+		if (loc.hash !== h) loc.hash = h;
+	}
+	function go(start) {
+		target = start;
+		if (applyTimer) return; // 이미 예약됨 → 최신 목표로 반영됨
+		const wait = Math.max(0, MIN_GAP - (Date.now() - lastApply));
+		if (wait === 0) apply();
+		else applyTimer = win.setTimeout(apply, wait);
+	}
+	// 현재 기준 페이지: 반영 대기 중인 목표가 있으면 그것 (해시는 아직 옛 값)
+	const basePage = () => (target != null ? target : currentPage());
+
+	// capture 단계 + 전파 중단: 사이트 리더의 키 처리와 겹쳐 해시가 엉키는 것 방지
+	win.addEventListener('keydown', (e) => {
 		const active = doc.activeElement;
 		if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
 
@@ -4441,8 +4466,9 @@ function setupReaderNav(win, opts = {}) {
 		if (isCmd || e.altKey) return;
 		if (!['a', 'ㅁ', 'd', 'ㅇ', 's', 'ㄴ'].includes(key)) return;
 		e.preventDefault();
+		e.stopImmediatePropagation();
 
-		const s = spreadStart(currentPage());
+		const s = spreadStart(basePage());
 
 		// A: 다음 펼침
 		if (key === 'a' || key === 'ㅁ') {
@@ -4465,7 +4491,7 @@ function setupReaderNav(win, opts = {}) {
 
 		// S: 닫기
 		(opts.onClose || hhCloseTab)();
-	});
+	}, true);
 }
 
 // === Reader 슬라이드 (자동 넘김: [ 시작 / ] 정지 / - + 속도) ===
