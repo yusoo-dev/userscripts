@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         [HITOMI] (자동 업데이트 로더)
 // @namespace    https://github.com/yusoo-dev/userscripts
-// @version      1.0.0
-// @description  GitHub의 최신 [HITOMI] 본체를 받아 실행합니다. 푸시하면 다음 페이지부터 바로 반영 (업데이트 확인 불필요)
+// @version      1.1.0
+// @description  GitHub의 최신 [HITOMI] 본체를 받아 실행합니다. 푸시 후 새로고침하면 바로 반영 (업데이트 확인 불필요)
 // @match        https://*.hitomi.la/*
 // @require      https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js
 // @run-at       document-start
@@ -23,14 +23,15 @@
 // ==/UserScript==
 
 /*
- * 동작 방식 (stale-while-revalidate)
- *  1) 페이지가 열리면: 이 브라우저에 저장해 둔 본체(GM 저장소)를 즉시 실행 → 지연 없음
- *  2) 동시에 GitHub main 의 최신 커밋 SHA 를 확인(캐시 없음)하고, 바뀌었으면
- *     커밋 고정 주소(raw/<SHA>/hitomi.user.js)로 받아 저장 → raw 5분 캐시를 우회해 푸시 즉시 반영
- *  3) 지금 페이지가 옛 버전으로 실행 중이면 상단 알림: 클릭하면 새로고침해서 바로 적용
- *     (다음에 여는 페이지/탭은 자동으로 새 버전)
- *  - GitHub API 는 비로그인 시 시간당 60회 → SHA 확인은 탭 전체 합쳐 SHA_CHECK_INTERVAL_MS 마다 1회
- *  - 저장된 본체가 없는 첫 실행만 받아오자마자 실행
+ * 동작 방식
+ *  - 확인할 때가 된 페이지 로드에서는: GitHub main 의 최신 커밋 SHA 를 확인(캐시 없음)하고,
+ *    바뀌었으면 커밋 고정 주소(raw/<SHA>/hitomi.user.js)로 받아 저장한 뒤 "그 최신 본체"를 실행
+ *    → raw 5분 캐시를 우회하므로 푸시 후 새로고침 한 번이면 바로 적용 (알림/클릭 없음)
+ *    · 새로고침(reload)이면 마지막 확인 후 RELOAD_MIN_MS 만 지나도 확인
+ *    · 일반 이동/새 탭은 SHA_CHECK_INTERVAL_MS 마다 1회 (GitHub API 비로그인 한도 시간당 60회)
+ *    · 확인이 CHECK_TIMEOUT_MS 안에 안 끝나거나 실패하면 저장된 본체로 실행
+ *  - 확인할 때가 아니면: 저장된 본체(GM 저장소)를 즉시 실행 → 지연 없음
+ *  - 저장된 본체가 없는 첫 실행은 받아오자마자 실행
  *  - 본체(hitomi.user.js)를 Violentmonkey 에 따로 설치해 두었다면 꺼 주세요 (본체에 중복 실행 방지 있음)
  *  - 상태 보기: 주소 끝에 #hhloader 를 붙여 열면 화면에 진단 표시
  */
@@ -42,7 +43,9 @@
 	const FILE = 'hitomi.user.js';
 	const API_SHA = `https://api.github.com/repos/${REPO}/commits/main`;
 	const RAW_AT = (sha) => `https://raw.githubusercontent.com/${REPO}/${sha}/${FILE}`;
-	const SHA_CHECK_INTERVAL_MS = 30 * 1000;
+	const SHA_CHECK_INTERVAL_MS = 60 * 1000;
+	const RELOAD_MIN_MS = 5 * 1000;
+	const CHECK_TIMEOUT_MS = 2500;
 	const KEY_CODE = 'code';
 	const KEY_SHA = 'sha';
 	const KEY_SHA_AT = 'shaCheckedAt';
@@ -138,14 +141,9 @@
 		else document.addEventListener('DOMContentLoaded', render, { once: true });
 	}
 
-	// 최신 본체 받기. 변경 없음/확인 생략 → null
+	// 최신 본체 받기. 변경 없음 → null
 	async function fetchLatest() {
-		const lastAt = Number(GM_getValue(KEY_SHA_AT, 0)) || 0;
 		const hasCode = !!GM_getValue(KEY_CODE, '');
-		if (hasCode && Date.now() - lastAt < SHA_CHECK_INTERVAL_MS) {
-			log('[sha] 최근에 확인함 → 생략');
-			return null;
-		}
 		GM_setValue(KEY_SHA_AT, Date.now());
 		const r = await request(API_SHA, { Accept: 'application/vnd.github.sha' });
 		const sha = String(r.responseText || '').trim();
@@ -160,31 +158,52 @@
 		return code;
 	}
 
-	// 1) 저장된 본체 즉시 실행
+	// 이번 페이지 로드에서 최신 확인을 할지
 	const cached = GM_getValue(KEY_CODE, '');
-	const runningVer = cached ? versionOf(cached) : null;
-	const ran = cached ? run(cached) : false;
-	log(`로더 v${LOADER_VERSION} · 저장된 본체 v${runningVer || '없음'} · 실행 ${ran ? '성공' : '안 함/실패'}`);
+	const lastAt = Number(GM_getValue(KEY_SHA_AT, 0)) || 0;
+	const isReload = (() => {
+		try {
+			return performance.getEntriesByType('navigation')[0]?.type === 'reload';
+		} catch {
+			return false;
+		}
+	})();
+	const since = Date.now() - lastAt;
+	const due = !cached || since >= SHA_CHECK_INTERVAL_MS || (isReload && since >= RELOAD_MIN_MS);
+	log(`로더 v${LOADER_VERSION} · 저장된 본체 v${cached ? versionOf(cached) : '없음'} · ${isReload ? '새로고침' : '이동'} · 마지막 확인 ${Math.round(since / 1000)}초 전 → ${due ? '확인' : '생략'}`);
 
-	// 2) 최신 확인 → 저장 → (옛 버전 실행 중이면) 알림
+	if (!due) {
+		run(cached);
+		showDiag('결과: 저장된 본체 실행');
+		return;
+	}
+
+	// 확인 후 최신 본체로 실행 (시간 초과/실패 시 저장된 본체)
+	let done = false;
+	const finish = (code, note) => {
+		if (done) return;
+		done = true;
+		if (code) run(code);
+		showDiag(note);
+	};
+	const timer = setTimeout(() => {
+		if (cached) finish(cached, `결과: ${CHECK_TIMEOUT_MS}ms 안에 확인 못 함 → 저장된 본체 실행 (받는 대로 다음 새로고침에 적용)`);
+	}, CHECK_TIMEOUT_MS);
+
 	fetchLatest()
 		.then((code) => {
-			if (!code || code === cached) {
-				showDiag('결과: 변경 없음');
-				return;
-			}
+			clearTimeout(timer);
+			if (!code) return finish(cached, '결과: 변경 없음');
 			GM_setValue(KEY_CODE, code);
-			const latestVer = versionOf(code);
-			showDiag(`결과: v${latestVer} 저장`);
-			if (!ran) {
-				run(code); // 첫 실행(또는 이전 실행 실패): 바로 실행
-				return;
-			}
-			toast(`[HITOMI] 새 버전 v${latestVer} 받음 (현재 v${runningVer}) · 클릭하면 바로 적용`, () => location.reload());
+			finish(code, `결과: v${versionOf(code)} 받아서 실행`);
 		})
 		.catch((e) => {
-			showDiag(`결과: 실패 · ${e.message}`);
-			if (!ran) toast(`[HITOMI] 로더: 본체를 받지 못했어요 · ${e.message}`);
-			else console.warn('[HITOMI 로더] 업데이트 확인 실패', e);
+			clearTimeout(timer);
+			console.warn('[HITOMI 로더] 업데이트 확인 실패', e);
+			if (cached) finish(cached, `결과: 확인 실패(${e.message}) → 저장된 본체 실행`);
+			else {
+				finish(null, `결과: 실패 · ${e.message}`);
+				toast(`[HITOMI] 로더: 본체를 받지 못했어요 · ${e.message}`);
+			}
 		});
 })();
