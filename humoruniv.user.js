@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.42.2
+// @version      1.43.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.42.2';
+  const SCRIPT_VERSION = '1.43.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -2017,7 +2017,43 @@
   }
 
   function saveNavCtx(ctx, t = table) {
-    try { sessionStorage.setItem(NAV_KEY(t), JSON.stringify(ctx)); } catch {}
+    // tmp: 필터에 걸린 '현재 글' 자리표시(이웃 계산용) — 저장하지 않음
+    const clean = { ...ctx, items: (ctx.items || []).filter((it) => !it.tmp) };
+    try { sessionStorage.setItem(NAV_KEY(t), JSON.stringify(clean)); } catch {}
+  }
+
+  // 게시판 목록(일반, 1페이지부터)을 받아 현재 글 위치까지 필터 기준 순서를 만듦.
+  // 현재 글이 필터에 걸린 글이어도 이웃 계산을 위해 자리표시(tmp)로 넣음.
+  const BOARD_CTX_MAX_PAGES = 15;
+  async function buildBoardCtx(cur) {
+    const curN = Number(cur);
+    const listUrl = new URL(`/board/list.html?table=${encodeURIComponent(table)}`, location.href).href;
+    const blocked = blockedNicksFor(table);
+    const self = { n: String(cur), href: location.href.replace(/#.*$/, ''), title: '', ok: 0, notok: null, nick: '', tmp: true };
+    const items = [];
+    let pageLinks = {};
+    let lastPg = 1;
+    let found = false;
+    try {
+      for (let pg = 1; pg <= BOARD_CTX_MAX_PAGES; pg++) {
+        const url = pg === 1 ? listUrl : (pageLinks[String(pg)] || setPg(listUrl, pg));
+        const doc = await fetchDoc(url);
+        const rows = [...doc.querySelectorAll('.post_item')];
+        if (!rows.length) break;
+        pageLinks = { ...collectPageLinks(doc, url), ...pageLinks };
+        lastPg = pg;
+        for (const el of rows) {
+          const it = rowToItem(el, url, table);
+          if (!it || items.some((x) => x.n === it.n)) continue;
+          const vis = rowVisibleFor(el, table, false, blocked);
+          if (!found && it.n === String(cur)) { found = true; if (!vis) it.tmp = true; items.push(it); continue; }
+          if (!found && Number(it.n) < curN) { found = true; items.push(self); } // 목록에 안 보이는 글(삭제 등) 자리
+          if (vis) items.push(it);
+        }
+        if (found) break; // 현재 글이 있는 페이지까지(나머지는 extendNav가 이어 받음)
+      }
+    } catch { return null; }
+    return found ? { at: Date.now(), listUrl, firstPg: 1, lastPg, pageLinks, items } : null;
   }
   function loadNavList() {
     try { return JSON.parse(sessionStorage.getItem(NAV_KEY(table)) || 'null'); } catch { return null; }
@@ -2123,10 +2159,19 @@
     if (document.documentElement.dataset.uwNav) return;
     if (!document.querySelector('li.next_prev_li, span.top_btn')) return; // 아직 파싱 전
 
-    const ctx = loadNavList();
+    let ctx = loadNavList();
     const cur = params.get('number');
     document.documentElement.dataset.uwNav = '1';
-    if (!ctx?.items || ctx.items.findIndex((it) => it.n === cur) < 0) return; // 목록에 없는 글 → 기본 동작 유지
+    if (!ctx?.items || ctx.items.findIndex((it) => it.n === cur) < 0) {
+      // 저장된 목록에 없는 글(다른 경로로 진입 등):
+      //  - 필터가 있는 게시판(대자·얼인·패션): 게시판 목록을 직접 받아 필터 기준 순서를 새로 만듦
+      //  - 필터 없는 게시판: 사이트 기본 동작 유지
+      if (!filterRule || !cur) return;
+      renderNav(true, null); renderNav(false, null); // 만드는 동안 필터 안 된 사이트 링크 숨김
+      ctx = await buildBoardCtx(cur);
+      if (!ctx) { renderNav(true, null, true); renderNav(false, null, true); return; } // 못 찾으면 원래대로
+      saveNavCtx(ctx);
+    }
     recordListProgress(ctx.listUrl, cur); // 이 목록에서 마지막으로 읽은 글 = 지금 글
     ctx.firstPg ||= 1; ctx.lastPg ||= ctx.firstPg;
 
@@ -2137,9 +2182,9 @@
 
     // 페이지 경계면 이웃 페이지를 불러와 이어 붙임.
     // 그래도 못 찾으면:
-    //  - 검색 결과에서 온 글: 숨김 유지(검색어와 무관한 글로 넘어가지 않게)
-    //  - 일반 목록(필터)에서 온 글: 사이트 원래 이전글/다음글을 다시 보여줌(목록 정보가 오래돼 끊기는 것 방지)
-    const fromSearch = /[?&]sk=[^&]/.test(ctx.listUrl || '');
+    //  - 검색 결과·필터 게시판(대자·얼인·패션): 숨김 유지(걸러진 글로 넘어가지 않게)
+    //  - 필터 없는 게시판(차단만 있는 경우 등): 사이트 원래 이전글/다음글을 다시 보여줌
+    const fromSearch = /[?&]sk=[^&]/.test(ctx.listUrl || '') || !!filterRule;
     if (!ctx.items[i + 1]) {
       const ok = await extendNav(ctx, +1);
       i = idxOf();
