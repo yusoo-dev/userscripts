@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.35
+// @version      7.36
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -24,6 +24,9 @@ if (window === top) {
 	}
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
+// 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
+const HH_VERSION = '7.36';
+
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
 
@@ -305,6 +308,14 @@ html.hh-favbar-open #hh-favbar-toggle { display: none; }
 }
 #hh-favbar .fb-item.series .th { box-shadow: 4px -4px 0 -1px #3a3a3a, 4px -4px 0 0 #2a2a2a; }
 
+/* ================= 좌측 상단 버전 표시 ================= */
+#hh-ver {
+  position: fixed; left: 6px; top: 4px; z-index: 99979; pointer-events: auto; user-select: none;
+  font: 10px/1.2 ui-monospace, monospace; color: #8a8a8a; opacity: .45;
+  scale: var(--hh-ui-scale, 1); transform-origin: 0 0;
+}
+#hh-ver:hover { opacity: 1; }
+
 /* ================= 좌측 하단 단축키 안내 ================= */
 #hh-keys {
   position: fixed; left: 10px; bottom: 10px; z-index: 99980;
@@ -467,6 +478,20 @@ html.hh-search-open .navbar > .header-table { transform-origin: 50% 0; width: mi
 #hh-keys { transform-origin: 0 100%; }
 #hh-rstar-zone { transform-origin: 100% 0; }
 ` }));
+
+// === 좌측 상단 버전 표시 ===
+if (window === top) {
+	const addBadge = () => {
+		if (document.getElementById('hh-ver')) return;
+		const el = document.createElement('div');
+		el.id = 'hh-ver';
+		el.textContent = `HH v${HH_VERSION}${typeof __hhCloseTab === 'function' ? ' · 로더' : ''}`;
+		el.title = typeof __hhCloseTab === 'function' ? 'GitHub 로더로 실행 중' : 'Violentmonkey 설치본으로 실행 중';
+		document.body.appendChild(el);
+	};
+	if (document.body) addBadge();
+	else document.addEventListener('DOMContentLoaded', addBadge, { once: true });
+}
 
 // reader 전용 스타일 (구 [HITOMI 리더])
 const isReader = /^\/reader\//.test(location.pathname);
