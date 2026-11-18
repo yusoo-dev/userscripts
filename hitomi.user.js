@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.39
+// @version      7.40
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.39';
+const HH_VERSION = '7.40';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -1288,13 +1288,56 @@ function patchFavGallery(id, patch) {
 	localStorage.setItem(FAV_GALLERY_KEY, JSON.stringify(next));
 	document.dispatchEvent(new CustomEvent('hh-favs-updated', { detail: { meta: true } }));
 }
-// 깨진 썸네일 1회 재조회 (세션당 ID 별 1번)
+// 이미지가 실제로 뜨는지 확인 (깨진 주소 저장 방지)
+function canLoadImage(url, ms = 8000) {
+	return new Promise((resolve) => {
+		const img = new Image();
+		const timer = setTimeout(() => {
+			img.src = '';
+			resolve(false);
+		}, ms);
+		img.onload = () => {
+			clearTimeout(timer);
+			resolve(img.naturalWidth > 0);
+		};
+		img.onerror = () => {
+			clearTimeout(timer);
+			resolve(false);
+		};
+		img.src = url;
+	});
+}
+// 썸네일 자동 찾기: 후보를 순서대로 실제 로드해 보고 뜨는 첫 주소를 사용
+//  1) 목록용 갤러리 블록(galleryblock)의 썸네일
+//  2) 작품 첫 장의 큰 썸네일 (tn 서버, webp → avif)
+async function findThumb(id) {
+	const cands = [];
+	try {
+		const u = await fetchGalleryThumb(id);
+		if (u) cands.push(u);
+	} catch {}
+	try {
+		const text = await gmText(`https://ltn.gold-usergeneratedcontent.net/galleries/${id}.js`);
+		const g = JSON.parse(text.replace(/^[^{]*/, '').replace(/;?\s*$/, ''));
+		const h = g.files?.[0]?.hash;
+		if (h) {
+			const path = `${h.slice(-1)}/${h.slice(-3, -1)}/${h}`;
+			cands.push(
+				`https://tn.gold-usergeneratedcontent.net/webpbigtn/${path}.webp`,
+				`https://tn.gold-usergeneratedcontent.net/avifbigtn/${path}.avif`
+			);
+		}
+	} catch {}
+	for (const u of cands) if (await canLoadImage(u)) return u;
+	return null;
+}
+// 썸네일 없음/깨짐 → 자동으로 찾아서 저장 (세션당 ID 별 1번)
 const thumbRetried = new Set();
 function refreshFavThumb(id) {
-	if (thumbRetried.has(id)) return;
+	if (!id || thumbRetried.has(id)) return;
 	thumbRetried.add(id);
-	fetchGalleryThumb(id)
-		.then((u) => patchFavGallery(id, u ? { thumb: u, thumbTried: 1, thumbBroken: 0 } : { thumbBroken: 1 }))
+	findThumb(id)
+		.then((u) => patchFavGallery(id, u ? { thumb: u, thumbTried: 1, thumbBroken: 0 } : { thumbTried: 1, thumbBroken: 1 }))
 		.catch(() => patchFavGallery(id, { thumbBroken: 1 }));
 }
 
@@ -1879,7 +1922,7 @@ async function syncFavMeta() {
 			try {
 				// 썸네일 없음(리더에서 추가 등) → 갤러리 블록에서 추출
 				if (!target.thumb && !target.thumbTried) {
-					const thumb = await fetchGalleryThumb(target.id).catch(() => null);
+					const thumb = await findThumb(target.id).catch(() => null);
 					patchFavGallery(target.id, { thumb: thumb || null, thumbTried: 1 });
 					if ((target.meta || 0) >= META_VERSION) continue;
 				}
@@ -3775,8 +3818,10 @@ function setupFavSidebar() {
 						const owner = arr.find((x) => x.thumb === thumbSrc) || g;
 						th.onerror = () => {
 							th.replaceWith(h('span', { className: 'th' }));
-							refreshFavThumb(owner.id); // 깨진 URL → 갤러리 블록에서 1회 재조회
+							refreshFavThumb(owner.id); // 깨진 주소 → 자동으로 다시 찾기
 						};
+					} else {
+						refreshFavThumb(g.id); // 썸네일 없음 → 자동으로 찾기 (찾으면 저장 후 다시 그림)
 					}
 					const isSeries = arr.length > 1;
 					// 페이지 수: 시리즈는 전 편 합계 (모든 편 조회가 끝났을 때만 표시)
