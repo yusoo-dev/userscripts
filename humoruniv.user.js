@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.44.2
+// @version      1.45.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.44.2';
+  const SCRIPT_VERSION = '1.45.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -862,14 +862,43 @@
     }
   }
 
+  /* ── 검색 요청 보호 ──
+   *  사이트는 게시판 하단검색(list.html?...&sk=)을 자주 하면 약 4시간 검색을 막음.
+   *  스크립트가 백그라운드에서 검색 주소를 부르지 않도록:
+   *   - 새 글 확인·안 읽은 글 찾기는 검색 대신 일반 목록을 받아 제목에 검색어가 든 글만 직접 골라냄
+   *   - 그래도 검색 주소가 필요한 경우(검색 결과 다음 페이지 등)는 SEARCH_MIN_GAP_MS에 1회로 제한
+   *   - 응답에 "잦은 검색이 제한" 안내가 오면 4시간 동안 스크립트 검색 요청 중단
+   */
+  const SEARCH_MIN_GAP_MS = 30 * 1000;
+  const SEARCH_BLOCK_MS = 4 * 60 * 60 * 1000;
+  const isSearchUrl = (u) => /[?&]sk=[^&#]/.test(String(u));
+
+  function scriptSearchAllowed() {
+    const now = Date.now();
+    const until = Number(store2.get('uw-search-block-until')) || 0;
+    const last = Number(store2.get('uw-search-last')) || 0;
+    if (now < until || now - last < SEARCH_MIN_GAP_MS) return false;
+    store2.set('uw-search-last', now);
+    return true;
+  }
+
   async function fetchDoc(url) {
+    if (isSearchUrl(url) && !scriptSearchAllowed()) throw new Error('search-throttled');
     const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const buf = await res.arrayBuffer();
     let html;
     try { html = new TextDecoder('euc-kr').decode(buf); } catch { html = new TextDecoder().decode(buf); }
+    if (/잦은\s*검색이\s*제한/.test(html)) {
+      store2.set('uw-search-block-until', Date.now() + SEARCH_BLOCK_MS);
+      throw new Error('search-blocked');
+    }
     return new DOMParser().parseFromString(html, 'text/html');
   }
+
+  // 검색어(EUC-KR 인코딩된 sk) → 글자. 일반 목록에서 제목으로 직접 거를 때 사용.
+  const kwFromSk = (sk) => (sk ? decodeEucKr(sk).trim() : '');
+  const titleOf = (el) => (el.querySelector('.link_hover')?.textContent || el.querySelector('a[href*="read.html"]')?.textContent || '').trim();
 
   // 다른 게시판 목록의 글이 그 게시판 규칙상 보이는 글인지(필터·차단·ai 숨김)
   function blockedNicksFor(t) {
@@ -908,8 +937,8 @@
     (String(url).match(/[?&]sk=([^&#]*)/) || [])[1] || '');
 
   // 목록에서 연 글을 읽으면 그 목록의 "마지막으로 읽은 글"로 기록
-  function recordListProgress(listUrl, num) {
-    const key = keyFromUrl(listUrl);
+  function recordListProgress(listUrl, num, keyOverride) {
+    const key = keyOverride || keyFromUrl(listUrl);
     if (!key.split('|')[0] || !Number(num)) return;
     store2.set(`uw-seen:${key}`, Number(num));
     try { localStorage.removeItem(`uw-new:${key}`); } catch {} // 다음 확인 때 다시 계산
@@ -927,6 +956,10 @@
     const listUrl = new URL(sk
       ? `/board/list.html?table=${t}&st=subject&searchday=${SEARCH_DAY}&sk=${sk}`
       : `/board/list.html?table=${t}`, location.href).href;
+    // 검색 목록(ㅇㅎ·ㅎㅂ)도 검색 대신 일반 목록을 훑으며 제목으로 거름(검색 제한 회피)
+    const kw = kwFromSk(sk);
+    const scanUrl = new URL(`/board/list.html?table=${t}`, location.href).href;
+    const maxPages = kw ? UNREAD_MAX_PAGES * 2 : UNREAD_MAX_PAGES;
     const seen = Number(store2.get(`uw-seen:${key}`)) || 0;
     if (!seen) { location.href = listUrl; return; }
 
@@ -940,8 +973,8 @@
       let lastPg = 1;
       let target = -1; // 안 읽은 가장 오래된 글의 items 인덱스
       let boundary = false;
-      for (let pg = 1; pg <= UNREAD_MAX_PAGES; pg++) {
-        const url = pg === 1 ? listUrl : (pageLinks[String(pg)] || setPg(listUrl, pg));
+      for (let pg = 1; pg <= maxPages; pg++) {
+        const url = pg === 1 ? scanUrl : (pageLinks[String(pg)] || setPg(scanUrl, pg));
         const doc = await fetchDoc(url);
         const rows = [...doc.querySelectorAll('.post_item')];
         if (!rows.length) break;
@@ -949,6 +982,11 @@
         lastPg = pg;
         let reached = false;
         for (const el of rows) {
+          // 검색어가 없는 글이라도 번호로 경계(마지막으로 읽은 글 위치)는 판정
+          if (kw && !titleOf(el).includes(kw)) {
+            if (!reached && (Number(postNum(el)) || 0) <= seen) { reached = true; boundary = true; target = items.length - 1; }
+            continue;
+          }
           if (!rowVisibleFor(el, t, hideAi, blocked)) continue;
           const it = rowToItem(el, url, t);
           if (!it || items.some((x) => x.n === it.n)) continue;
@@ -962,7 +1000,8 @@
       const read = readSetFor(t);
       while (target >= 0 && read.has(items[target].n)) target--;
       if (target < 0) { location.href = listUrl; return; } // 안 읽은 글 없음 → 목록으로
-      saveNavCtx({ at: Date.now(), listUrl, firstPg: 1, lastPg, pageLinks, items }, t);
+      saveNavCtx({ at: Date.now(), listUrl: kw ? scanUrl : listUrl, kw, hideAi, progressKey: key,
+        firstPg: 1, lastPg, pageLinks, items }, t);
       location.href = items[target].href;
     } catch {
       if (span) span.textContent = label;
@@ -974,14 +1013,16 @@
     const [t, sk] = key.split('|');
     const seen = Number(store2.get(`uw-seen:${key}`)) || 0;
     if (!seen) return false; // 한 번도 안 본 목록은 기준이 없어 표시 안 함
-    const url = sk ? `/board/list.html?table=${t}&st=subject&searchday=${SEARCH_DAY}&sk=${sk}`
-                   : `/board/list.html?table=${t}`;
-    const doc = await fetchDoc(url);
+    // 검색 목록(ㅇㅎ·ㅎㅂ)도 검색 대신 일반 목록 1페이지에서 제목으로 거름(검색 제한 회피).
+    // 새 글은 항상 일반 목록 1페이지에 먼저 올라오므로 결과는 같음.
+    const kw = kwFromSk(sk);
+    const doc = await fetchDoc(`/board/list.html?table=${t}`);
     const blocked = blockedNicksFor(t);
-    const hideAi = hideAiFor(url);
+    const hideAi = hideAiFor(`?table=${t}&sk=${sk || ''}`);
     const read = readSetFor(t);
     for (const el of doc.querySelectorAll('.post_item')) {
       const n = Number(postNum(el)) || 0;
+      if (kw && !titleOf(el).includes(kw)) continue;
       if (n > seen && !read.has(String(n)) && rowVisibleFor(el, t, hideAi, blocked)) return true;
     }
     return false;
@@ -2113,9 +2154,10 @@
     };
   }
 
-  function rowsToItems(root, baseUrl, hideAi = false) {
+  function rowsToItems(root, baseUrl, hideAi = false, kw = '') {
     const items = [];
     for (const el of root.querySelectorAll('.post_item')) {
+      if (kw && !rowTitle(el).includes(kw)) continue;
       if (!rowPasses(el, hideAi)) continue;
       const it = rowToItem(el, baseUrl);
       if (it) items.push(it);
@@ -2190,16 +2232,21 @@
 
   // 목록 페이지 하나를 받아서(EUC-KR) 필터 통과 글 목록으로 변환. 글이 하나도 없으면 null(끝).
   async function fetchListPage(ctx, pg) {
+    const hideAi = ctx.hideAi ?? hideAiFor(ctx.listUrl);
+    const sk = (String(ctx.listUrl).match(/[?&]sk=([^&#]*)/) || [])[1] || '';
+    // 검색 결과 목록의 1페이지(=최신 글 확인)는 검색 대신 일반 목록 1페이지 + 제목 거르기로 대체
+    if (!ctx.kw && sk && pg === 1) {
+      const t = (String(ctx.listUrl).match(/[?&]table=([^&#]*)/) || [])[1] || table;
+      const plainUrl = new URL(`/board/list.html?table=${t}`, location.href).href;
+      const doc = await fetchDoc(plainUrl);
+      if (!doc.querySelector('.post_item')) return null;
+      return rowsToItems(doc, plainUrl, hideAi, kwFromSk(sk));
+    }
     const url = ctx.pageLinks?.[String(pg)] || setPg(ctx.listUrl, pg);
-    const res = await fetch(url, { credentials: 'include' });
-    if (!res.ok) return null;
-    const buf = await res.arrayBuffer();
-    let html;
-    try { html = new TextDecoder('euc-kr').decode(buf); } catch { html = new TextDecoder().decode(buf); }
-    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const doc = await fetchDoc(url); // 검색 주소면 30초에 1회 제한(초과 시 예외 → 호출부에서 실패 처리)
     if (!doc.querySelector('.post_item')) return null;
     ctx.pageLinks = { ...collectPageLinks(doc, url), ...(ctx.pageLinks || {}) }; // 다음 페이지 링크 누적
-    return rowsToItems(doc, url, hideAiFor(ctx.listUrl));
+    return rowsToItems(doc, url, hideAi, ctx.kw || '');
   }
 
   // dir=+1: 다음 페이지(더 오래된 글)를 뒤에, dir=-1: 이전 페이지(더 최신 글)를 앞에 붙임
@@ -2231,7 +2278,8 @@
     const firstKnown = ctx.items[0]?.n;
     const idx = got.findIndex((it) => it.n === firstKnown);
     // 기존 첫 글보다 위에 있는 글 = 새 글. 기존 첫 글이 안 보이면(새 글이 한 페이지 넘게 쌓임) 1페이지의 모르는 글 전부
-    const newer = (idx >= 0 ? got.slice(0, idx) : got).filter((it) => !known.has(it.n));
+    const newer = (idx >= 0 ? got.slice(0, idx) : got)
+      .filter((it) => !known.has(it.n) && (!firstKnown || Number(it.n) > Number(firstKnown)));
     if (!newer.length) return false;
     ctx.items = newer.concat(ctx.items);
     saveNavCtx(ctx);
@@ -2301,7 +2349,7 @@
       if (!ctx) { renderNav(true, null, true); renderNav(false, null, true); return; } // 못 찾으면 원래대로
       saveNavCtx(ctx);
     }
-    recordListProgress(ctx.listUrl, cur); // 이 목록에서 마지막으로 읽은 글 = 지금 글
+    recordListProgress(ctx.listUrl, cur, ctx.progressKey); // 이 목록에서 마지막으로 읽은 글 = 지금 글
     ctx.firstPg ||= 1; ctx.lastPg ||= ctx.firstPg;
 
     const idxOf = () => ctx.items.findIndex((it) => it.n === cur);
