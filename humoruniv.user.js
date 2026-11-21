@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.46.3
+// @version      1.46.4
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.46.3';
+  const SCRIPT_VERSION = '1.46.4';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -1084,8 +1084,10 @@
     const cur = new Set((store2.get(`uw-known:${key}`) || []).map(Number));
     let changed = false;
     for (const n of nums) { const v = Number(n); if (v && !cur.has(v)) { cur.add(v); changed = true; } }
-    if (!changed) return;
+    if (!changed) return false;
     store2.set(`uw-known:${key}`, [...cur].sort((a, b) => b - a).slice(0, KNOWN_MAX));
+    dlog(`known+ ${key} → ${cur.size}개`);
+    return true;
   }
   // 읽은 가장 최신 글(기준) 갱신 후, 그보다 새로운 안 읽은 글이 있는지
   function knownHasNew(key) {
@@ -1165,6 +1167,7 @@
           if (USE_SEARCH_CHECK && !has && res[k] && !res[k].done) await checkListNewBySearch(k);
           has = has || knownHasNew(k);
         }
+        dlog(`판정 ${k}: plain=${JSON.stringify(res[k])} → ${has}`);
         save(k, has);
       }
     }
@@ -1244,7 +1247,49 @@
     applyNewMarks();
   }
 
+  /* ── 진단 패널: 주소 끝에 #uwdebug 를 붙여 열면 ㅇㅎ·ㅎㅂ 판정 데이터를 화면에 표시(복사 버튼) ── */
+  var DEBUG_ON = /#uwdebug/.test(location.hash) || sessionStorage.getItem('uw-debug') === '1';
+  if (/#uwdebug/.test(location.hash)) { try { sessionStorage.setItem('uw-debug', '1'); } catch {} }
+  var dlogs = [];
+  function dlog(m) { if (!DEBUG_ON || !dlogs) return; dlogs.push(`${new Date().toTimeString().slice(0, 8)} ${m}`); renderDebug(); }
+  function debugText() {
+    const lines = [`v${SCRIPT_VERSION} · ${location.pathname}${location.search}`];
+    const read = readSetFor(SEARCH_TABLE);
+    lines.push(`읽은글(${SEARCH_TABLE}) ${read.size}개 · 현재글 ${params.get('number') || '-'} 읽음=${read.has(String(params.get('number')))}`);
+    for (const { label, sk } of QUICK_SEARCH_KEYWORDS) {
+      const k = listKey(SEARCH_TABLE, sk);
+      const known = (store2.get(`uw-known:${k}`) || []).map(Number);
+      const seen = Number(store2.get(`uw-seen:${k}`)) || 0;
+      lines.push(`[${label}] seen=${seen} new=${JSON.stringify(store2.get(`uw-new:${k}`))}`);
+      lines.push(`  srch=${JSON.stringify(store2.get(`uw-srch:${k}`))}`);
+      lines.push(`  known ${known.length}개: ${known.slice(0, 15).map((n) => n + (read.has(String(n)) ? '✓' : '')).join(' ')}`);
+    }
+    const ctx = (() => { try { return JSON.parse(sessionStorage.getItem(NAV_KEY(SEARCH_TABLE)) || 'null'); } catch { return null; } })();
+    lines.push(`ctx(${SEARCH_TABLE}): key=${ctx?.progressKey || '-'} kw=${ctx?.kw || '-'} items=${ctx?.items?.length || 0} [${(ctx?.items || []).slice(0, 12).map((i) => i.n).join(' ')}]`);
+    lines.push(`검색차단까지 ${Math.max(0, ((Number(store2.get('uw-search-block-until')) || 0) - Date.now()) / 60000 | 0)}분 · 마지막검색 ${((Date.now() - (Number(store2.get('uw-search-last')) || 0)) / 1000) | 0}초 전`);
+    return lines.concat('— 로그 —', dlogs.slice(-25)).join('\n');
+  }
+  let debugBox = null;
+  function renderDebug() {
+    if (!DEBUG_ON || !document.body) return;
+    if (!debugBox) {
+      debugBox = el('uw-debug', { display: 'block', position: 'fixed', left: '4px', right: '4px', bottom: '4px', 'max-height': '55vh',
+        overflow: 'auto', 'z-index': '2147483647', background: 'rgba(0,0,0,.92)', color: '#7CFC9A', padding: '8px',
+        font: '11px/1.45 monospace', 'white-space': 'pre-wrap', 'word-break': 'break-all', 'border-radius': '8px' });
+      const bar = el('uw-debugbar', { display: 'flex', gap: '6px', 'margin-bottom': '6px' });
+      const mk = (txt, fn) => { const b = el('uw-dbtn', { display: 'inline-block', padding: '4px 10px', background: '#333', color: '#fff', 'border-radius': '6px' }); b.textContent = txt; b.addEventListener('click', fn); bar.appendChild(b); };
+      mk('복사', () => { navigator.clipboard?.writeText(debugText()).then(() => dlog('복사됨'), () => dlog('복사 실패')); });
+      mk('다시 확인', () => { for (const { sk } of QUICK_SEARCH_KEYWORDS) localStorage.removeItem(`uw-new:${listKey(SEARCH_TABLE, sk)}`); refreshNewMarks(); });
+      mk('끄기', () => { try { sessionStorage.removeItem('uw-debug'); } catch {} debugBox.remove(); });
+      debugBox.appendChild(bar);
+      debugBox.appendChild(el('uw-debugtxt', { display: 'block' }));
+      document.body.appendChild(debugBox);
+    }
+    debugBox.lastChild.textContent = debugText();
+  }
+
   function initNewMarks() {
+    if (DEBUG_ON) { if (document.body) renderDebug(); else document.addEventListener('DOMContentLoaded', renderDebug, { once: true }); setInterval(renderDebug, 3000); }
     noteUserSearch();
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', syncFromSearchPage, { once: true });
     else syncFromSearchPage();
@@ -2543,7 +2588,14 @@
       saveNavCtx(ctx);
     }
     recordListProgress(ctx.listUrl, cur, ctx.progressKey); // 이 목록에서 마지막으로 읽은 글 = 지금 글
-    addKnown(ctx.progressKey || keyFromUrl(ctx.listUrl), ctx.items.filter((it) => !it.tmp).map((it) => it.n));
+    {
+      const kk = ctx.progressKey || keyFromUrl(ctx.listUrl);
+      // 새 번호가 들어오면 저장된 판정(1분 캐시)을 버리고 바로 다시 계산
+      if (addKnown(kk, ctx.items.filter((it) => !it.tmp).map((it) => it.n))) {
+        store2.set(`uw-new:${kk}`, { at: Date.now(), has: knownHasNew(kk) });
+        applyNewMarks();
+      }
+    }
     ctx.firstPg ||= 1; ctx.lastPg ||= ctx.firstPg;
 
     const idxOf = () => ctx.items.findIndex((it) => it.n === cur);
