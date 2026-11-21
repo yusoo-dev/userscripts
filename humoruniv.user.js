@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.46.0
+// @version      1.46.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.46.0';
+  const SCRIPT_VERSION = '1.46.1';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -940,7 +940,8 @@
   function recordListProgress(listUrl, num, keyOverride) {
     const key = keyOverride || keyFromUrl(listUrl);
     if (!key.split('|')[0] || !Number(num)) return;
-    store2.set(`uw-seen:${key}`, Number(num));
+    // 더 최신 글을 읽었을 때만 앞으로 이동(옛 글을 다시 열어도 기준이 뒤로 가지 않음)
+    if (Number(num) > (Number(store2.get(`uw-seen:${key}`)) || 0)) store2.set(`uw-seen:${key}`, Number(num));
     try { localStorage.removeItem(`uw-new:${key}`); } catch {} // 다음 확인 때 다시 계산
   }
 
@@ -968,6 +969,7 @@
     try {
       const blocked = blockedNicksFor(t);
       const hideAi = hideAiFor(listUrl);
+      const readNow = readSetFor(t);
       const items = [];
       let pageLinks = {};
       let lastPg = 1;
@@ -990,7 +992,8 @@
           if (!rowVisibleFor(el, t, hideAi, blocked)) continue;
           const it = rowToItem(el, url, t);
           if (!it || items.some((x) => x.n === it.n)) continue;
-          if (!reached && Number(it.n) <= seen) { reached = true; boundary = true; target = items.length - 1; }
+          // 경계 = 이 목록에서 읽은 가장 최신 글(최근과 동일: 그 바로 다음 글로 이동)
+          if (!reached && (Number(it.n) <= seen || readNow.has(it.n))) { reached = true; boundary = true; target = items.length - 1; }
           items.push(it); // 경계 페이지는 끝까지 모아 둠(▼ 이전글 연결용)
         }
         if (reached) break;
@@ -1042,14 +1045,16 @@
    *  놓칠 수 있음 → 마지막으로 읽은 위치(가장 오래된 기준)에 닿을 때까지 최대 NEW_SCAN_MAX_PAGES 훑음. */
   const NEW_SCAN_MAX_PAGES = 8;
 
+  // 결과: { key: { has, done } } — done=true면 "읽은 가장 최신 글"까지 확인해서 결과가 확정됨
+  //  최근과 같은 기준: 그 목록에서 읽은 가장 최신 글보다 더 최신이면서 안 읽은(보이는) 글이 있으면 has
   async function checkListsNew(t, keys) {
-    const result = Object.fromEntries(keys.map((k) => [k, false]));
+    const result = Object.fromEntries(keys.map((k) => [k, { has: false, done: false }]));
     const conf = keys.map((k) => {
       const sk = k.split('|')[1] || '';
       return { k, kw: kwFromSk(sk), seen: Number(store2.get(`uw-seen:${k}`)) || 0, hideAi: hideAiFor(`?table=${t}&sk=${sk}`) };
     }).filter((c) => c.seen > 0); // 한 번도 안 본 목록은 기준이 없어 표시 안 함
+    for (const k of keys) if (!conf.some((c) => c.k === k)) result[k].done = true;
     if (!conf.length) return result;
-    const minSeen = Math.min(...conf.map((c) => c.seen));
     const blocked = blockedNicksFor(t);
     const read = readSetFor(t);
     const base = new URL(`/board/list.html?table=${t}`, location.href).href;
@@ -1060,18 +1065,21 @@
       const rows = [...doc.querySelectorAll('.post_item')];
       if (!rows.length) break;
       pageLinks = { ...collectPageLinks(doc, url), ...pageLinks };
-      let reachedOld = false;
       for (const el of rows) {
         const n = Number(postNum(el)) || 0;
-        if (n <= minSeen) { reachedOld = true; continue; }
-        if (read.has(String(n))) continue;
         for (const c of conf) {
-          if (result[c.k] || n <= c.seen) continue;
+          const r = result[c.k];
+          if (r.done) continue;
+          if (n <= c.seen) { r.done = true; continue; }
           if (c.kw && !titleOf(el).includes(c.kw)) continue;
-          if (rowVisibleFor(el, t, c.hideAi, blocked)) result[c.k] = true;
+          if (!rowVisibleFor(el, t, c.hideAi, blocked)) continue;
+          if (read.has(String(n))) { // 이 목록에서 읽은 가장 최신 글 → 기준을 여기로 당김
+            store2.set(`uw-seen:${c.k}`, n); r.done = true; continue;
+          }
+          r.has = true; r.done = true;
         }
       }
-      if (reachedOld || conf.every((c) => result[c.k])) break;
+      if (conf.every((c) => result[c.k].done)) break;
     }
     return result;
   }
@@ -1096,13 +1104,16 @@
       let res = {};
       try { res = await checkListsNew(t, ks); } catch {}
       for (const k of ks) {
-        let has = !!res[k];
-        // 검색 목록(ㅇㅎ·ㅎㅂ): 일반 목록 앞쪽에서 못 찾았으면(새 글이 이미 여러 페이지 뒤로 밀린 경우)
-        // 가끔만 실제 검색 1페이지로 확인. 검색 제한에 걸리지 않게 드물게(SEARCH_CHECK_EVERY_MS).
-        if (USE_SEARCH_CHECK && !has && k.split('|')[1]) {
+        let has = !!res[k]?.has;
+        // 검색 목록(ㅇㅎ·ㅎㅂ): 일반 목록 앞쪽에서 결론이 안 났을 때만(읽은 글이 여러 페이지 뒤)
+        // 가끔 실제 검색 1페이지로 확인. 검색 제한에 걸리지 않게 드물게(SEARCH_CHECK_EVERY_MS).
+        if (USE_SEARCH_CHECK && res[k] && !res[k].done && k.split('|')[1]) {
           const r = await checkListNewBySearch(k);
           if (r != null) has = r;
-          else has = !!store2.get(`uw-srch:${k}`)?.has; // 이번엔 검색 안 함 → 마지막 검색 결과 유지
+          else { // 이번엔 검색 안 함 → 마지막 검색 결과 유지(그 글을 이미 읽었으면 해제)
+            const prev = store2.get(`uw-srch:${k}`);
+            has = !!prev?.has && !readSetFor(k.split('|')[0]).has(String(prev.n));
+          }
         }
         save(k, has);
       }
@@ -1134,12 +1145,15 @@
     const blocked = blockedNicksFor(t);
     const hideAi = hideAiFor(`?table=${t}&sk=${sk}`);
     const read = readSetFor(t);
-    let has = false;
+    let has = false, hit = 0;
     for (const el of doc.querySelectorAll('.post_item')) {
       const n = Number(postNum(el)) || 0;
-      if (n > seen && !read.has(String(n)) && rowVisibleFor(el, t, hideAi, blocked)) { has = true; break; }
+      if (n <= seen) break;
+      if (!rowVisibleFor(el, t, hideAi, blocked)) continue;
+      if (read.has(String(n))) { store2.set(`uw-seen:${key}`, n); break; } // 읽은 가장 최신 글에서 멈춤
+      has = true; hit = hit || n; // 가장 최신의 안 읽은 글(읽으면 캐시 결과 해제용)
     }
-    store2.set(`uw-srch:${key}`, { at: Date.now(), has, readVer });
+    store2.set(`uw-srch:${key}`, { at: Date.now(), has, n: hit, readVer });
     return has;
   }
 
