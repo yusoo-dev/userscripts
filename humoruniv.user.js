@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.46.4
+// @version      1.46.5
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.46.4';
+  const SCRIPT_VERSION = '1.46.5';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -686,8 +686,22 @@
     } catch {}
   }
 
+  // 지금 읽는 글이 ㅇㅎ·ㅎㅂ 목록에 속한 글(모아 둔 번호에 있음)이면 그 목록의 "마지막으로 읽은 글"로 기록.
+  //  어느 경로(대자 목록, 검색 목록, 이전/다음글)로 열었든 같음 — 최근과 동일한 기준.
+  function noteSearchKeysRead(t, n) {
+    if (t !== SEARCH_TABLE || !Number(n)) return;
+    for (const { sk } of QUICK_SEARCH_KEYWORDS) {
+      const k = listKey(SEARCH_TABLE, sk);
+      if (!(store2.get(`uw-known:${k}`) || []).map(Number).includes(Number(n))) continue;
+      if (Number(store2.get(`uw-seen:${k}`)) === Number(n)) continue;
+      store2.set(`uw-seen:${k}`, Number(n));
+      try { localStorage.removeItem(`uw-new:${k}`); } catch {}
+    }
+  }
+
   function recordLastRead() {
     if (isRead && table) markRead(table, params.get('number'));
+    if (isRead && table) noteSearchKeysRead(table, params.get('number'));
     if (!isRead || table !== RECENT_TABLE) return;
     const n = params.get('number');
     if (n) {
@@ -836,7 +850,15 @@
   const NEW_KEY_RECENT = 'recent';
   const NEW_MARK_EXCLUDE = ['pds', 'pdswait']; // 연두색 표시를 하지 않는 게시판 버튼(웃자·대자)
   const NEW_CHECK_TTL = 60 * 1000; // 목록별 확인 간격(페이지를 넘겨도 이 간격 안에서는 저장된 결과 사용)
-  const listKey = (t, sk) => `${t}|${String(sk || '').toUpperCase()}`;
+  // 사이트 주소는 검색어를 UTF-8(%E3%85%87…)로도 씀 → ㅇㅎ·ㅎㅂ는 항상 같은 키(EUC-KR 표기)로 맞춤
+  const normSk = (sk) => {
+    const raw = String(sk || '');
+    let txt = '';
+    try { txt = decodeURIComponent(raw.replace(/\+/g, ' ')).trim(); } catch {}
+    const q = QUICK_SEARCH_KEYWORDS.find((x) => x.label === txt);
+    return (q ? q.sk : raw).toUpperCase();
+  };
+  const listKey = (t, sk) => `${t}|${normSk(sk)}`;
   const store2 = {
     get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
@@ -946,8 +968,8 @@
   function recordListProgress(listUrl, num, keyOverride) {
     const key = keyOverride || keyFromUrl(listUrl);
     if (!key.split('|')[0] || !Number(num)) return;
-    // 더 최신 글을 읽었을 때만 앞으로 이동(옛 글을 다시 열어도 기준이 뒤로 가지 않음)
-    if (Number(num) > (Number(store2.get(`uw-seen:${key}`)) || 0)) store2.set(`uw-seen:${key}`, Number(num));
+    // 최근과 동일: 마지막으로 읽은 글 = 지금 글
+    store2.set(`uw-seen:${key}`, Number(num));
     try { localStorage.removeItem(`uw-new:${key}`); } catch {} // 다음 확인 때 다시 계산
   }
 
@@ -1007,7 +1029,7 @@
           const it = rowToItem(el, url, t);
           if (!it || items.some((x) => x.n === it.n)) continue;
           // 경계 = 이 목록에서 읽은 가장 최신 글(최근과 동일: 그 바로 다음 글로 이동)
-          if (!reached && (Number(it.n) <= seen || readNow.has(it.n))) { reached = true; boundary = true; target = items.length - 1; }
+          if (!reached && Number(it.n) <= seen) { reached = true; boundary = true; target = items.length - 1; }
           items.push(it); // 경계 페이지는 끝까지 모아 둠(▼ 이전글 연결용)
         }
         if (reached) break;
@@ -1089,14 +1111,12 @@
     dlog(`known+ ${key} → ${cur.size}개`);
     return true;
   }
-  // 읽은 가장 최신 글(기준) 갱신 후, 그보다 새로운 안 읽은 글이 있는지
+  // 마지막으로 읽은 글보다 새로운 안 읽은 글이 있는지
   function knownHasNew(key) {
     const t = key.split('|')[0];
     const known = (store2.get(`uw-known:${key}`) || []).map(Number);
     const read = readSetFor(t);
-    let seen = Number(store2.get(`uw-seen:${key}`)) || 0;
-    for (const n of known) if (n > seen && read.has(String(n))) seen = n;
-    if (seen !== (Number(store2.get(`uw-seen:${key}`)) || 0)) store2.set(`uw-seen:${key}`, seen);
+    const seen = Number(store2.get(`uw-seen:${key}`)) || 0; // 마지막으로 읽은 글(최근과 동일)
     if (!seen) return false;
     return known.some((n) => n > seen && !read.has(String(n)));
   }
@@ -1130,9 +1150,7 @@
           if (c.kw && !titleOf(el).includes(c.kw)) continue;
           if (!rowVisibleFor(el, t, c.hideAi, blocked)) continue;
           if (c.kw) addKnown(c.k, [n]);
-          if (read.has(String(n))) { // 이 목록에서 읽은 가장 최신 글 → 기준을 여기로 당김
-            store2.set(`uw-seen:${c.k}`, n); r.done = true; continue;
-          }
+          if (read.has(String(n))) continue; // 이미 읽은 글은 건너뜀
           r.has = true; r.done = true;
         }
       }
@@ -1204,7 +1222,7 @@
       const n = Number(postNum(el)) || 0;
       if (n <= seen) break;
       if (!rowVisibleFor(el, t, hideAi, blocked)) continue;
-      if (read.has(String(n))) { store2.set(`uw-seen:${key}`, n); break; } // 읽은 가장 최신 글에서 멈춤
+      if (read.has(String(n))) continue;
       has = true; hit = hit || n; // 가장 최신의 안 읽은 글(읽으면 캐시 결과 해제용)
     }
     store2.set(`uw-srch:${key}`, { at: Date.now(), has, n: hit, readVer });
@@ -1238,9 +1256,10 @@
       const n = Number(postNum(el)) || 0;
       if (!n || n <= seen) break;
       if (!rowVisibleFor(el, table, hideAi, blocked)) continue;
-      if (read.has(String(n))) { store2.set(`uw-seen:${key}`, n); break; }
+      if (read.has(String(n))) continue;
       has = true; hit = hit || n;
     }
+    has = knownHasNew(key);
     const readVer = (localStorage.getItem(readSetKey(table)) || '').length;
     store2.set(`uw-srch:${key}`, { at: Date.now(), has, n: hit, readVer });
     store2.set(`uw-new:${key}`, { at: Date.now(), has: has && seen > 0 });
@@ -2592,6 +2611,7 @@
       const kk = ctx.progressKey || keyFromUrl(ctx.listUrl);
       // 새 번호가 들어오면 저장된 판정(1분 캐시)을 버리고 바로 다시 계산
       if (addKnown(kk, ctx.items.filter((it) => !it.tmp).map((it) => it.n))) {
+        noteSearchKeysRead(table, cur);
         store2.set(`uw-new:${kk}`, { at: Date.now(), has: knownHasNew(kk) });
         applyNewMarks();
       }
