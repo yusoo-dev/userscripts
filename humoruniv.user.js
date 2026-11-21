@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.45.0
+// @version      1.45.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.45.0';
+  const SCRIPT_VERSION = '1.45.1';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -1037,15 +1037,65 @@
       .some((li) => (li.querySelector('.btn')?.textContent || '').includes('다음글'));
   }
 
+  /* 같은 게시판의 여러 목록(예: 대기자료의 ㅇㅎ·ㅎㅂ)을 일반 목록 한 번 훑기로 함께 확인.
+   *  일반 목록 1페이지만 보면, 글이 빨리 올라오는 대기자료에선 새 ㅇㅎ·ㅎㅂ 글이 금방 2~3페이지로 밀려
+   *  놓칠 수 있음 → 마지막으로 읽은 위치(가장 오래된 기준)에 닿을 때까지 최대 NEW_SCAN_MAX_PAGES 훑음. */
+  const NEW_SCAN_MAX_PAGES = 8;
+
+  async function checkListsNew(t, keys) {
+    const result = Object.fromEntries(keys.map((k) => [k, false]));
+    const conf = keys.map((k) => {
+      const sk = k.split('|')[1] || '';
+      return { k, kw: kwFromSk(sk), seen: Number(store2.get(`uw-seen:${k}`)) || 0, hideAi: hideAiFor(`?table=${t}&sk=${sk}`) };
+    }).filter((c) => c.seen > 0); // 한 번도 안 본 목록은 기준이 없어 표시 안 함
+    if (!conf.length) return result;
+    const minSeen = Math.min(...conf.map((c) => c.seen));
+    const blocked = blockedNicksFor(t);
+    const read = readSetFor(t);
+    const base = new URL(`/board/list.html?table=${t}`, location.href).href;
+    let pageLinks = {};
+    for (let pg = 1; pg <= NEW_SCAN_MAX_PAGES; pg++) {
+      const url = pg === 1 ? base : (pageLinks[String(pg)] || setPg(base, pg));
+      const doc = await fetchDoc(url);
+      const rows = [...doc.querySelectorAll('.post_item')];
+      if (!rows.length) break;
+      pageLinks = { ...collectPageLinks(doc, url), ...pageLinks };
+      let reachedOld = false;
+      for (const el of rows) {
+        const n = Number(postNum(el)) || 0;
+        if (n <= minSeen) { reachedOld = true; continue; }
+        if (read.has(String(n))) continue;
+        for (const c of conf) {
+          if (result[c.k] || n <= c.seen) continue;
+          if (c.kw && !titleOf(el).includes(c.kw)) continue;
+          if (rowVisibleFor(el, t, c.hideAi, blocked)) result[c.k] = true;
+        }
+      }
+      if (reachedOld || conf.every((c) => result[c.k])) break;
+    }
+    return result;
+  }
+
   async function refreshNewMarks() {
-    const keys = [...new Set([...document.querySelectorAll('uw-navi a[data-uw-new-key]')].map((a) => a.dataset.uwNewKey))];
+    const keys = [...new Set([...document.querySelectorAll('uw-navi a[data-uw-new-key]')].map((a) => a.dataset.uwNewKey))]
+      .filter((key) => {
+        const st = store2.get(`uw-new:${key}`);
+        return !(st && Date.now() - st.at < NEW_CHECK_TTL);
+      });
+    const save = (key, has) => { store2.set(`uw-new:${key}`, { at: Date.now(), has }); applyNewMarks(); };
+    if (keys.includes(NEW_KEY_RECENT)) {
+      try { save(NEW_KEY_RECENT, await checkRecentNew()); } catch {}
+    }
+    // 게시판별로 묶어서 한 번에 확인
+    const byTable = {};
     for (const key of keys) {
-      const st = store2.get(`uw-new:${key}`);
-      if (st && Date.now() - st.at < NEW_CHECK_TTL) continue;
+      if (key === NEW_KEY_RECENT) continue;
+      (byTable[key.split('|')[0]] ||= []).push(key);
+    }
+    for (const [t, ks] of Object.entries(byTable)) {
       try {
-        const has = key === NEW_KEY_RECENT ? await checkRecentNew() : await checkListNew(key);
-        store2.set(`uw-new:${key}`, { at: Date.now(), has });
-        applyNewMarks();
+        const res = await checkListsNew(t, ks);
+        for (const k of ks) save(k, res[k]);
       } catch {}
     }
   }
