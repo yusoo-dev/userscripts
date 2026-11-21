@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.46.2
+// @version      1.46.3
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.46.2';
+  const SCRIPT_VERSION = '1.46.3';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -1014,6 +1014,7 @@
       }
       if (!boundary) target = items.length - 1; // 경계 못 찾음(최대 페이지 초과) → 받은 것 중 가장 오래된 글
       // 다른 목록에서 이미 읽은 글은 건너뜀(경계 위쪽에서 가장 오래된 '안 읽은' 글)
+      if (kw) addKnown(key, items.map((it) => it.n));
       const read = readSetFor(t);
       const lastIdx = boundary ? target + 1 : -1; // 마지막으로 읽은 글(경계)
       while (target >= 0 && read.has(items[target].n)) target--;
@@ -1073,6 +1074,31 @@
    *  놓칠 수 있음 → 마지막으로 읽은 위치(가장 오래된 기준)에 닿을 때까지 최대 NEW_SCAN_MAX_PAGES 훑음. */
   const NEW_SCAN_MAX_PAGES = 8;
 
+  /* 검색 목록(ㅇㅎ·ㅎㅂ)에 속한 글 번호 모음(보이는 글만) — 판정의 근거.
+   *  일반 목록 앞쪽 몇 페이지만으로는 오래된 ㅇㅎ·ㅎㅂ 글이 안 보여 놓쳤음 →
+   *  한 번이라도 본 검색 결과(직접 연 검색 목록, 버튼 이동 때의 검색, 가끔 하는 검색 확인, 이어 읽기 목록)와
+   *  일반 목록에서 새로 발견한 글을 모아 두고, 여기서 "읽은 가장 최신 글보다 새로운 안 읽은 글"을 찾음. */
+  const KNOWN_MAX = 400;
+  function addKnown(key, nums) {
+    if (!key.split('|')[1]) return;
+    const cur = new Set((store2.get(`uw-known:${key}`) || []).map(Number));
+    let changed = false;
+    for (const n of nums) { const v = Number(n); if (v && !cur.has(v)) { cur.add(v); changed = true; } }
+    if (!changed) return;
+    store2.set(`uw-known:${key}`, [...cur].sort((a, b) => b - a).slice(0, KNOWN_MAX));
+  }
+  // 읽은 가장 최신 글(기준) 갱신 후, 그보다 새로운 안 읽은 글이 있는지
+  function knownHasNew(key) {
+    const t = key.split('|')[0];
+    const known = (store2.get(`uw-known:${key}`) || []).map(Number);
+    const read = readSetFor(t);
+    let seen = Number(store2.get(`uw-seen:${key}`)) || 0;
+    for (const n of known) if (n > seen && read.has(String(n))) seen = n;
+    if (seen !== (Number(store2.get(`uw-seen:${key}`)) || 0)) store2.set(`uw-seen:${key}`, seen);
+    if (!seen) return false;
+    return known.some((n) => n > seen && !read.has(String(n)));
+  }
+
   // 결과: { key: { has, done } } — done=true면 "읽은 가장 최신 글"까지 확인해서 결과가 확정됨
   //  최근과 같은 기준: 그 목록에서 읽은 가장 최신 글보다 더 최신이면서 안 읽은(보이는) 글이 있으면 has
   async function checkListsNew(t, keys) {
@@ -1101,6 +1127,7 @@
           if (n <= c.seen) { r.done = true; continue; }
           if (c.kw && !titleOf(el).includes(c.kw)) continue;
           if (!rowVisibleFor(el, t, c.hideAi, blocked)) continue;
+          if (c.kw) addKnown(c.k, [n]);
           if (read.has(String(n))) { // 이 목록에서 읽은 가장 최신 글 → 기준을 여기로 당김
             store2.set(`uw-seen:${c.k}`, n); r.done = true; continue;
           }
@@ -1133,15 +1160,10 @@
       try { res = await checkListsNew(t, ks); } catch {}
       for (const k of ks) {
         let has = !!res[k]?.has;
-        // 검색 목록(ㅇㅎ·ㅎㅂ): 일반 목록 앞쪽에서 결론이 안 났을 때만(읽은 글이 여러 페이지 뒤)
-        // 가끔 실제 검색 1페이지로 확인. 검색 제한에 걸리지 않게 드물게(SEARCH_CHECK_EVERY_MS).
-        if (USE_SEARCH_CHECK && res[k] && !res[k].done && k.split('|')[1]) {
-          const r = await checkListNewBySearch(k);
-          if (r != null) has = r;
-          else { // 이번엔 검색 안 함 → 마지막 검색 결과 유지(그 글을 이미 읽었으면 해제)
-            const prev = store2.get(`uw-srch:${k}`);
-            has = !!prev?.has && !!prev.n && !readSetFor(k.split('|')[0]).has(String(prev.n));
-          }
+        if (k.split('|')[1]) {
+          // 검색 목록(ㅇㅎ·ㅎㅂ): 모아 둔 글 번호로 판정. 아직 모은 게 적으면(처음 등) 가끔 검색 1페이지로 보충.
+          if (USE_SEARCH_CHECK && !has && res[k] && !res[k].done) await checkListNewBySearch(k);
+          has = has || knownHasNew(k);
         }
         save(k, has);
       }
@@ -1174,6 +1196,7 @@
     const hideAi = hideAiFor(`?table=${t}&sk=${sk}`);
     const read = readSetFor(t);
     let has = false, hit = 0;
+    addKnown(key, [...doc.querySelectorAll('.post_item')].filter((el) => rowVisibleFor(el, t, hideAi, blocked)).map(postNum));
     for (const el of doc.querySelectorAll('.post_item')) {
       const n = Number(postNum(el)) || 0;
       if (n <= seen) break;
@@ -1207,6 +1230,7 @@
     const blocked = blockedNicksFor(table);
     const hideAi = hideAiFor(location.href);
     let has = false, hit = 0;
+    addKnown(key, [...document.querySelectorAll('.post_item')].filter((el) => rowVisibleFor(el, table, hideAi, blocked)).map(postNum));
     for (const el of document.querySelectorAll('.post_item')) {
       const n = Number(postNum(el)) || 0;
       if (!n || n <= seen) break;
@@ -2519,6 +2543,7 @@
       saveNavCtx(ctx);
     }
     recordListProgress(ctx.listUrl, cur, ctx.progressKey); // 이 목록에서 마지막으로 읽은 글 = 지금 글
+    addKnown(ctx.progressKey || keyFromUrl(ctx.listUrl), ctx.items.filter((it) => !it.tmp).map((it) => it.n));
     ctx.firstPg ||= 1; ctx.lastPg ||= ctx.firstPg;
 
     const idxOf = () => ctx.items.findIndex((it) => it.n === cur);
