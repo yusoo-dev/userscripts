@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.45.3
+// @version      1.46.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.45.3';
+  const SCRIPT_VERSION = '1.46.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -869,7 +869,7 @@
    *   - 그래도 검색 주소가 필요한 경우(검색 결과 다음 페이지 등)는 SEARCH_MIN_GAP_MS에 1회로 제한
    *   - 응답에 "잦은 검색이 제한" 안내가 오면 4시간 동안 스크립트 검색 요청 중단
    */
-  const SEARCH_MIN_GAP_MS = 30 * 1000;
+  const SEARCH_MIN_GAP_MS = 3 * 60 * 1000; // 스크립트 검색 최소 간격(사용자 직접 검색 포함)
   const SEARCH_BLOCK_MS = 4 * 60 * 60 * 1000;
   const isSearchUrl = (u) => /[?&]sk=[^&#]/.test(String(u));
 
@@ -1112,9 +1112,13 @@
   // 검색 1페이지로 새 글 확인. 간격이 안 됐거나 막혔으면 null(=이번엔 확인 안 함).
   //  - 평소: 목록별 SEARCH_CHECK_EVERY_MS(10분)에 1회
   //  - 글을 읽어서 표시가 초기화된 직후: SEARCH_RECHECK_MIN_MS(2분) 이상 지났으면 바로 1회
-  const USE_SEARCH_CHECK = false; // 사이트 검색 제한 경고 방지: 백그라운드 검색 사용 안 함
-  const SEARCH_CHECK_EVERY_MS = 10 * 60 * 1000;
-  const SEARCH_RECHECK_MIN_MS = 2 * 60 * 1000;
+  // 검색 제한 경고를 피하면서 정확도 확보: 검색 범위를 '최근 1개월'로 줄이고 아주 드물게만 검색.
+  //  - 목록별 15분에 1회(글을 읽어 표시가 초기화되면 5분 지난 뒤 1회)
+  //  - 스크립트 검색끼리는 최소 3분 간격(SEARCH_MIN_GAP_MS), 사용자가 직접 검색한 직후 3분간도 쉼
+  const USE_SEARCH_CHECK = true;
+  const SEARCH_CHECK_DAY = '1month';
+  const SEARCH_CHECK_EVERY_MS = 15 * 60 * 1000;
+  const SEARCH_RECHECK_MIN_MS = 5 * 60 * 1000;
   async function checkListNewBySearch(key) {
     const prev = store2.get(`uw-srch:${key}`); // { at, has, readVer }
     const readVer = (localStorage.getItem(readSetKey(key.split('|')[0])) || '').length; // 읽은 글이 늘었는지 감지용
@@ -1125,7 +1129,7 @@
     const seen = Number(store2.get(`uw-seen:${key}`)) || 0;
     if (!seen) return null;
     let doc;
-    try { doc = await fetchDoc(`/board/list.html?table=${t}&st=subject&searchday=${SEARCH_DAY}&sk=${sk}`); }
+    try { doc = await fetchDoc(`/board/list.html?table=${t}&st=subject&searchday=${SEARCH_CHECK_DAY}&sk=${sk}`); }
     catch { return null; } // 30초 간격 제한·검색 차단 중이면 이번엔 생략
     const blocked = blockedNicksFor(t);
     const hideAi = hideAiFor(`?table=${t}&sk=${sk}`);
@@ -1143,7 +1147,13 @@
   //  예전엔 'load'(모든 이미지·영상 로딩 완료) 이후에 확인해서, 영상 많은 글을 빠르게 넘기면
   //  확인이 한 번도 안 돌아 새 글 표시가 늦거나 안 켜졌음.
   //  머무는 동안에도 NEW_CHECK_TTL마다 다시 확인.
+  // 사용자가 직접 검색 결과를 연 것도 검색 1회로 기록 → 직후 스크립트 검색을 쉼
+  function noteUserSearch() {
+    if (isList && isSearchUrl(location.href)) store2.set('uw-search-last', Date.now());
+  }
+
   function initNewMarks() {
+    noteUserSearch();
     const run = () => {
       setTimeout(refreshNewMarks, 600);
       setInterval(() => { if (!document.hidden) refreshNewMarks(); }, NEW_CHECK_TTL);
