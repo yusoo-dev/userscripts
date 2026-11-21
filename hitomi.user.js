@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.45
+// @version      7.46
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.45';
+const HH_VERSION = '7.46';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -4233,8 +4233,22 @@ if (!isReader) {
 	decoratePageCounts();
 	setupSearchOverlay();
 	setupDragTitlePrompt();
-	// 연두 태그 지정/해제 시 즉시 재정렬 (클래스 변경은 childList 감시에 안 걸림)
-	document.addEventListener('hh-rules-changed', () => sortTagLists());
+	// 규칙(태그/작가/제목) 변경 → 목록에 바로 반영
+	//  - 이 탭: 메뉴/팝오버/설정 패널이 hh-rules-changed 발생 (클래스 변경은 childList 감시에 안 걸리므로 직접 처리)
+	//  - 다른 탭: localStorage 'storage' 이벤트로 감지 → 같은 처리 + 이 탭의 열린 설정 패널도 갱신
+	const RULE_KEYS = new Set([
+		TAG_STORAGE_KEY, BLOCK_STORAGE_KEY, HL_STORAGE_KEY, FAV_ARTIST_KEY, HIDE_ARTIST_KEY, TITLE_BLOCK_KEY, TITLE_EXACT_KEY,
+	]);
+	const reapplyRules = () => {
+		applyTagRules();
+		sortTagLists();
+		hideDjOnDuplicate();
+	};
+	document.addEventListener('hh-rules-changed', reapplyRules);
+	window.addEventListener('storage', (e) => {
+		if (!RULE_KEYS.has(e.key)) return;
+		document.dispatchEvent(new CustomEvent('hh-rules-changed')); // reapplyRules + 패널 재렌더
+	});
 	if (IS_LIST_PAGE) setupFavSidebar();
 
 	// === DOM 변경 감시 ===
