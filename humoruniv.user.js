@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.46.7
+// @version      1.46.8
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.46.7';
+  const SCRIPT_VERSION = '1.46.8';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -712,35 +712,13 @@
     }
   }
 
-  async function goNextUnread(btn) {
+  // 최근: 마지막으로 읽은 웃긴자료 글로 이동(이미 그 글이면 그대로). 기록이 없으면 목록.
+  function goNextUnread() {
     let last = null;
     try { last = localStorage.getItem(RECENT_KEY); } catch {}
-    const listUrl = `/board/list.html?table=${RECENT_TABLE}`;
-    if (!last) { location.href = listUrl; return; }
-
-    const span = btn?.querySelector('span');
-    const label = span?.textContent;
-    try {
-      const url = `/board/read.html?table=${RECENT_TABLE}&number=${encodeURIComponent(last)}`;
-      const res = await fetch(url, { credentials: 'include' });
-      const buf = await res.arrayBuffer();
-      let html;
-      try { html = new TextDecoder('euc-kr').decode(buf); } catch { html = new TextDecoder().decode(buf); }
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const nextLi = [...doc.querySelectorAll('li.next_prev_li')]
-        .find((li) => (li.querySelector('.btn')?.textContent || '').includes('다음글'));
-      const href = nextLi?.querySelector('a')?.getAttribute('href');
-      if (href) { location.href = new URL(href, new URL(url, location.href)).href; return; }
-      // 새 글이 없으면 마지막으로 읽은 글로 이동(이미 그 글을 보고 있으면 그대로)
-      if (isRead && table === RECENT_TABLE && params.get('number') === last) {
-        if (span) span.textContent = label;
-        return;
-      }
-      location.href = new URL(url, location.href).href;
-    } catch {
-      if (span) span.textContent = label;
-      location.href = listUrl; // 실패 시 목록으로
-    }
+    if (!last) { location.href = `/board/list.html?table=${RECENT_TABLE}`; return; }
+    if (isRead && table === RECENT_TABLE && params.get('number') === last) return;
+    location.href = `/board/read.html?table=${RECENT_TABLE}&number=${encodeURIComponent(last)}`;
   }
 
   /* ── 목록 화면 플로팅 검색 버튼 ──
@@ -1059,7 +1037,11 @@
       }
       saveNavCtx({ at: Date.now(), listUrl: base(), kw, hideAi, progressKey: key,
         firstPg: 1, lastPg, pageLinks, items }, t);
-      location.href = items[target].href;
+      // 마지막으로 읽은 글로 이동(▲ 다음글로 이어 읽기). 경계를 못 찾았으면 안 읽은 가장 오래된 글로.
+      const dest = items[lastIdx] || items[target];
+      if (span) span.textContent = label;
+      if (isRead && table === t && params.get('number') === dest.n) return;
+      location.href = dest.href;
     } catch {
       if (span) span.textContent = label;
       location.href = listUrl;
