@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.46.8
+// @version      1.47.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.46.8';
+  const SCRIPT_VERSION = '1.47.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -288,6 +288,11 @@
         setBlockPick(!blockPick, blockBtn); // 차단 선택 모드 켜기/끄기
       });
       bar.appendChild(blockBtn);
+    } else if (isRead && table) {
+      // 글 화면: 누르면 이 글 작성자를 바로 차단하고 다음 글(없으면 목록)로 이동
+      const blockBtn = navBtn('차단', '#', false);
+      blockBtn.addEventListener('click', (e) => { e.preventDefault(); blockAuthorAndNext(blockBtn); });
+      bar.appendChild(blockBtn);
     }
 
     root.appendChild(bar);
@@ -439,6 +444,48 @@
   function isBlockedRow(el) {
     const set = blockedNicks();
     return set.size > 0 && set.has(rowNick(el));
+  }
+
+  /* ── 글 화면에서 작성자 차단 ──
+   *  작성자 찾기: ① 이어 읽기 목록(ctx)에 저장된 이 글의 작성자 ② 본문 위 작성자 영역('아바타/쪽지/글검색' 옆) ③ 첫 닉네임 요소
+   *  이동: ▲ 다음글 방향으로 차단한 사람 글을 건너뛴 첫 글 → 없으면 사이트 다음글 → 없으면 목록. */
+  function readAuthorNick() {
+    const cur = params.get('number');
+    const ctx = loadNavList();
+    const it = ctx?.items?.find((x) => x.n === cur);
+    if (it?.nick) return it.nick.trim();
+    const anchor = [...document.querySelectorAll('a, span, div')]
+      .find((e) => e.children.length === 0 && /아바타\s*\/\s*쪽지/.test(e.textContent));
+    for (let box = anchor?.parentElement, i = 0; box && i < 4; box = box.parentElement, i++) {
+      const n = rowNick(box);
+      if (n && !/아바타/.test(n)) return n;
+    }
+    return document.querySelector('.hu_nick_txt')?.textContent.trim() || '';
+  }
+
+  function blockAuthorAndNext(btn) {
+    const nick = readAuthorNick();
+    const span = btn?.querySelector('span');
+    if (!nick) { if (span) span.textContent = '작성자?'; setTimeout(() => { if (span) span.textContent = '차단'; }, 1500); return; }
+    saveBlockedNicks([...blockedNicks(), nick]);
+    if (span) span.textContent = `${nick} 차단`;
+    const cur = params.get('number');
+    const ctx = loadNavList();
+    const blocked = blockedNicks();
+    const items = ctx?.items || [];
+    const i = items.findIndex((x) => x.n === cur);
+    if (i >= 0) {
+      for (let j = i - 1; j >= 0; j--) { // ▲ 다음글(더 최신) 방향
+        if (items[j].tmp || blocked.has((items[j].nick || '').trim())) continue;
+        location.href = items[j].href; return;
+      }
+    }
+    const nextLi = [...document.querySelectorAll('li.next_prev_li')]
+      .find((li) => (li.querySelector('.btn')?.textContent || '').includes('다음글'));
+    const nextNick = nextLi ? rowNick(nextLi) : '';
+    const href = nextLi?.querySelector('a')?.getAttribute('href');
+    if (href && href !== '#' && !/^javascript/i.test(href) && !blocked.has(nextNick)) { location.href = new URL(href, location.href).href; return; }
+    location.href = ctx?.listUrl || `/board/list.html?table=${encodeURIComponent(table)}`;
   }
 
   let blockModal = null;
