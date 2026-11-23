@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.47.0
+// @version      1.47.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.47.0';
+  const SCRIPT_VERSION = '1.47.1';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -2620,6 +2620,15 @@
     }
   }
 
+  // 이어 읽기 목록이 없을 때(사이트 기본 이전글·다음글): 차단한 사람 글이면 그 줄을 숨김
+  function hideBlockedNativeNav() {
+    const bl = blockedNicks();
+    if (!bl.size) return;
+    for (const li of document.querySelectorAll('li.next_prev_li')) {
+      if (bl.has(rowNick(li))) css(li, { display: 'none' });
+    }
+  }
+
   async function applyFilteredNav() {
     if (!isRead || !table) return;
     if (document.documentElement.dataset.uwNav) return;
@@ -2632,11 +2641,20 @@
       // 저장된 목록에 없는 글(다른 경로로 진입 등):
       //  - 필터가 있는 게시판(대자·얼인·패션): 게시판 목록을 직접 받아 필터 기준 순서를 새로 만듦
       //  - 필터 없는 게시판: 사이트 기본 동작 유지
-      if (!filterRule || !cur) return;
+      if (!filterRule || !cur) { hideBlockedNativeNav(); return; }
       renderNav(true, null); renderNav(false, null); // 만드는 동안 필터 안 된 사이트 링크 숨김
       ctx = await buildBoardCtx(cur);
       if (!ctx) { renderNav(true, null, true); renderNav(false, null, true); return; } // 못 찾으면 원래대로
       saveNavCtx(ctx);
+    }
+    // 저장해 둔 목록은 차단 전에 만들어졌을 수 있음 → 지금 차단 목록으로 다시 거름(현재 글은 유지)
+    {
+      const bl = blockedNicks();
+      if (bl.size) {
+        const before = ctx.items.length;
+        ctx.items = ctx.items.filter((it) => it.n === cur || !bl.has((it.nick || '').trim()));
+        if (ctx.items.length !== before) saveNavCtx(ctx);
+      }
     }
     recordListProgress(ctx.listUrl, cur, ctx.progressKey); // 이 목록에서 마지막으로 읽은 글 = 지금 글
     {
