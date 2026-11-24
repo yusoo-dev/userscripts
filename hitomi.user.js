@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.46
+// @version      7.47
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.46';
+const HH_VERSION = '7.47';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -4504,6 +4504,63 @@ function setupReaderSlide(win) {
 if (isReader) {
 	setupReaderNav(window);
 	setupReaderSlide(window);
+	setupReaderSearch();
+}
+
+// === 리더: Cmd/Ctrl+K 검색 ===
+// 리더 페이지엔 사이트 검색창이 없어서 자체 입력창을 띄움 (모양은 제목 제외 입력창과 같은 공통 스타일)
+// Enter = 현재 탭에서 검색 / ⌘·Ctrl+Enter = 새 탭 / Esc = 닫기. language:korean 은 자동 포함
+function setupReaderSearch() {
+	function open() {
+		const existing = document.getElementById('hh-title-prompt');
+		if (existing) return existing.querySelector('input')?.focus();
+		const box = document.createElement('div');
+		box.id = 'hh-title-prompt';
+		const title = Object.assign(document.createElement('div'), { className: 'hh-title', textContent: '검색 (language:korean 자동 포함)' });
+		const input = Object.assign(document.createElement('input'), {
+			type: 'text',
+			placeholder: '예) artist:이름  female:태그  제목',
+			spellcheck: false,
+			autocomplete: 'off',
+		});
+		const hint = Object.assign(document.createElement('div'), { className: 'hh-hint', textContent: 'Enter 검색 · ⌘Enter 새 탭 · Esc 닫기' });
+		const close = () => box.remove();
+		input.addEventListener('keydown', (e) => {
+			e.stopPropagation(); // 리더 단축키(A/D/S/F …)로 새지 않게
+			if (e.isComposing) return;
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				close();
+				return;
+			}
+			if (e.key !== 'Enter') return;
+			e.preventDefault();
+			const q = input.value.trim();
+			if (!q) return;
+			const url = searchUrl(q);
+			close();
+			if (e.metaKey || e.ctrlKey) {
+				if (typeof GM_openInTab === 'function') GM_openInTab(url, { active: true, insert: true });
+				else window.open(url, '_blank');
+			} else location.href = url;
+		});
+		input.addEventListener('blur', () => setTimeout(close, 100));
+		box.append(title, input, hint);
+		document.body.appendChild(box);
+		input.focus();
+	}
+	// capture: 리더 넘김 키 처리보다 먼저
+	window.addEventListener(
+		'keydown',
+		(e) => {
+			if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K' || e.key === 'ㅏ')) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				open();
+			}
+		},
+		true
+	);
 }
 
 // 이전 버전(v7.41~7.44) 즐겨찾기 전체 화면 리더 설정 정리
