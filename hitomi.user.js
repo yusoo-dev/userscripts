@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.49
+// @version      7.50
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.49';
+const HH_VERSION = '7.50';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -38,7 +38,6 @@ if (window === top) (document.head || document.documentElement).appendChild(
   Object.assign(document.createElement('style'), { textContent: `
 /* ================= 사이트 보정 ================= */
 .hh-filtered, .gallery-content > .hh-filtered { display: none !important; }
-.gallery-content > .hh-omni-dup, .gallery-content > .hh-omni-fav-dup { display: none !important; } /* 총집편에 포함된 편 */
 .relatedtags li.hidden-list-item { display: inline-block !important; }
 .relatedtags li:has(> a[href*="/reader/"]) { display: none !important; }
 /* 글자색 강조: 연두 = 하이라이트 태그가 있는 카드의 타이틀 / 주황 = 즐겨찾기 작가 이름
@@ -1450,7 +1449,6 @@ function markSeriesCandidates() {
 		if (!card || !titleA || card.dataset.hhSeriesV === ver) return;
 		card.dataset.hhSeriesV = ver;
 		h1.querySelector(':scope > .hh-series-hint')?.remove();
-		card.classList.remove('hh-omni-fav-dup');
 		const id = cardGalleryId(card);
 		if (!id || favIds.has(id)) return;
 		const artists = cardArtists(card);
@@ -1460,12 +1458,6 @@ function markSeriesCandidates() {
 			if (!pool) continue;
 			const group = groupSeries([...pool, item]).find((arr) => arr.some((x) => x.id === id));
 			if (!group || group.length < 2) continue;
-			// 즐겨찾기한 같은 시리즈에 총집편이 있으면 이 편은 볼 필요 없음 → 숨김
-			const omnibus = group.find((x) => x.id !== id && pagesOf(x) >= OMNIBUS_PAGES);
-			if (omnibus && pagesOf(item) < OMNIBUS_PAGES) {
-				card.classList.add('hh-omni-fav-dup'); // 작가 페이지 포함
-				break;
-			}
 			const n = chapterNo(item);
 			const hint = document.createElement('i');
 			hint.className = 'hh-series-hint';
@@ -2074,74 +2066,18 @@ function decoratePageCounts() {
 	arrangeOmnibus();
 }
 
-// 총집편 정리 (목록 페이지)
-// 1) 총집편 카드를 목록 맨 위로 (총집편끼리는 원래 순서 유지)
-// 2) 같은 목록에서 총집편과 같은 시리즈로 보이는 편(같은 작가 + 시리즈 판정)은 숨김
-//    - 시리즈 판정은 즐겨찾기 사이드바와 같은 groupSeries (수동 묶기/해제도 반영)
-//    - 같은 작품의 다른 판이므로 작가 페이지에서도 숨김
-let omnibusSig = '';
+// 총집편 카드를 목록 맨 위로 (총집편끼리는 원래 순서 유지)
 function arrangeOmnibus() {
 	const box = document.querySelector('.gallery-content');
 	if (!box) return;
 	const map = getPageCounts();
 	const cards = [...box.children].filter((c) => c.tagName === 'DIV');
-	const info = cards.map((card) => {
+	const omni = cards.filter((card) => {
 		const id = cardGalleryId(card);
-		const a = card.querySelector('h1.lillie a');
-		return {
-			card,
-			id,
-			n: (id && map[id]) || 0,
-			title: a ? origTitle(a).replace(/\s+/g, ' ').trim() : '',
-			artists: cardArtists(card),
-		};
+		return id && (map[id] || 0) >= OMNIBUS_PAGES;
 	});
-	const omni = info.filter((x) => x.id && x.n >= OMNIBUS_PAGES);
-
-	// 1) 맨 위로 (순서가 다를 때만 이동 → MutationObserver 루프 방지)
-	if (omni.length && omni.some((x, i) => cards[i] !== x.card)) box.prepend(...omni.map((x) => x.card));
-
-	// 2) 포함 편 숨김 — 카드 구성/페이지 수/수동 묶기가 같으면 재계산 생략
-	const sig =
-		location.pathname + '|' + readRaw(SERIES_LINK_KEY) + '|' + readRaw(SERIES_SPLIT_KEY) + '|' +
-		info.map((x) => `${x.id}:${x.n}:${x.title}:${x.artists.join('/')}`).join('\u0001');
-	if (sig === omnibusSig) return;
-	omnibusSig = sig;
-
-	const hide = new Set();
-	const counts = new Map(); // 총집편 id -> 숨긴 편 수
-	if (omni.length) {
-		const lower = (arr) => arr.map((a) => a.toLowerCase());
-		omni.forEach((o) => {
-			const oa = new Set(lower(o.artists));
-			// 같은 작가끼리만 비교. 작가 정보가 없는 카드는 제목 판정만으로 비교
-			const cands = info.filter(
-				(x) =>
-					x !== o &&
-					x.id &&
-					x.n < OMNIBUS_PAGES &&
-					(!oa.size || !x.artists.length || lower(x.artists).some((a) => oa.has(a)))
-			);
-			if (!cands.length) return;
-			const group = groupSeries([o, ...cands].map(({ id, title, artists }) => ({ id, title, artists }))).find(
-				(g) => g.some((x) => x.id === o.id)
-			);
-			const parts = (group || []).filter((x) => x.id !== o.id);
-			parts.forEach((x) => hide.add(x.id));
-			if (parts.length) counts.set(o.id, parts.length);
-		});
-	}
-	info.forEach((x) => {
-		const on = hide.has(x.id);
-		if (x.card.classList.contains('hh-omni-dup') !== on) x.card.classList.toggle('hh-omni-dup', on);
-	});
-	omni.forEach((o) => {
-		const label = o.card.querySelector('h1.lillie > .hh-omnibus');
-		if (!label) return;
-		const c = counts.get(o.id);
-		const next = `${OMNIBUS_PAGES}p 이상` + (c ? ` · 이 목록에서 포함된 편 ${c}개 숨김` : '');
-		if (label.title !== next) label.title = next;
-	});
+	// 순서가 다를 때만 이동 → MutationObserver 루프 방지
+	if (omni.length && omni.some((card, i) => cards[i] !== card)) box.prepend(...omni);
 }
 
 // 있으면 제거, 없으면 추가. 반환값: 토글 후 포함 여부
