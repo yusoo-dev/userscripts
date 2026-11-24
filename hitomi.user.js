@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.47
+// @version      7.48
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.47';
+const HH_VERSION = '7.48';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -164,6 +164,18 @@ ul a.hh-tag-block { text-decoration: line-through !important; outline: 2px solid
 #hh-title-prompt { position: fixed; z-index: 100001; top: 20%; left: 50%; translate: -50% 0; width: min(420px, 90vw); padding: 10px; }
 #hh-title-prompt .hh-title { color: var(--hh-sub); margin: 0 2px 6px; }
 #hh-title-prompt .hh-hint { color: var(--hh-dim); margin: 6px 2px 0; font-size: 11px !important; }
+/* 리더 검색 자동완성 */
+#hh-title-prompt .hh-suggest { margin-top: 6px; max-height: 300px; overflow: auto; overscroll-behavior: contain; }
+#hh-title-prompt .hh-suggest[hidden] { display: none; }
+#hh-title-prompt .hh-suggest .row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 5px 8px; border-radius: var(--hh-r-sm); cursor: pointer;
+}
+#hh-title-prompt .hh-suggest .row:hover, #hh-title-prompt .hh-suggest .row.on { background: var(--hh-hover); }
+#hh-title-prompt .hh-suggest .v { color: var(--hh-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#hh-title-prompt .hh-suggest .k { flex: none; color: var(--hh-sub); font-size: 12px !important; }
+#hh-title-prompt .hh-suggest .kind-artist .v { color: var(--hh-artist); }
+#hh-title-prompt .hh-suggest .kind-history .k { color: var(--hh-dim); }
 html.hh-search-open .navbar > .header-table {
   display: flex !important; align-items: flex-start; gap: 6px;
   position: fixed !important; z-index: 100002; top: 18%; left: 50%; transform: none !important; translate: -50% 0;
@@ -481,6 +493,16 @@ if (window === top && location.pathname === '/search.html') {
 		!terms.some((t) => LANG_TERM_RE.test(t) && t.toLowerCase() !== FORCE_LANG);
 	if (terms.length && !ok) {
 		location.replace(`/search.html?${encodeURIComponent(withForcedLang(query))}${location.hash}`);
+	} else if (terms.length) {
+		// 최근 검색 기록 (리더 검색 자동완성용, language:korean 제외, 최근 30개)
+		const q = stripForcedLang(query).trim();
+		if (q) {
+			try {
+				const KEY = 'hitomi_search_history';
+				const list = JSON.parse(localStorage.getItem(KEY) || '[]').filter((x) => x !== q);
+				localStorage.setItem(KEY, JSON.stringify([q, ...list].slice(0, 30)));
+			} catch {}
+		}
 	}
 }
 
@@ -2467,6 +2489,39 @@ $(document)
 // === 태그 한글화 + 성별 배경색 ===
 // force: 사전 갱신 시 이미 번역된 태그도 다시 적용
 // ※ 텍스트는 바뀔 때만 쓴다 (MutationObserver 무한 루프 방지)
+// 태그 종류(female/male/tag) 기록 — 리더 검색 자동완성에서 올바른 접두어를 쓰기 위함 (모아서 저장, 최대 5000개)
+const TAG_NS_KEY = 'hitomi_tag_ns'; // { 영문 태그: ['female', 'male', 'tag'] } (백업 대상 아님)
+let tagNsPending = null;
+let tagNsTimer = null;
+function recordTagNs(tag, ns) {
+	if (!tag) return;
+	if (!tagNsPending) tagNsPending = new Map();
+	if (!tagNsPending.has(tag)) tagNsPending.set(tag, new Set());
+	tagNsPending.get(tag).add(ns);
+	clearTimeout(tagNsTimer);
+	tagNsTimer = setTimeout(() => {
+		const map = readJSON(TAG_NS_KEY, {}) || {};
+		let changed = false;
+		tagNsPending.forEach((set, t) => {
+			const cur = new Set(map[t] || []);
+			const before = cur.size;
+			set.forEach((x) => cur.add(x));
+			if (cur.size !== before) {
+				delete map[t]; // 최근 것을 뒤로 (오래된 것부터 정리)
+				map[t] = [...cur];
+				changed = true;
+			}
+		});
+		tagNsPending = null;
+		if (!changed) return;
+		const keys = Object.keys(map);
+		if (keys.length > 5000) keys.slice(0, keys.length - 5000).forEach((k) => delete map[k]);
+		try {
+			localStorage.setItem(TAG_NS_KEY, JSON.stringify(map));
+		} catch {}
+	}, 1000);
+}
+
 function hijackTagLinks(force = false) {
 	const dict = getTagKo();
 	const kv = String(tagKoVersion);
@@ -2481,6 +2536,7 @@ function hijackTagLinks(force = false) {
 			a.setAttribute('data-tag', original);
 			if (suffix === '♀') a.style.background = '#ff7eb3';
 			if (suffix === '♂') a.style.background = '#7ec8e3';
+			recordTagNs(cleanTag(original), suffix === '♀' ? 'female' : suffix === '♂' ? 'male' : 'tag');
 		}
 
 		// 같은 사전 버전으로 이미 처리했으면 건너뜀 (미번역 태그 매 프레임 재처리 방지)
@@ -4507,46 +4563,175 @@ if (isReader) {
 	setupReaderSearch();
 }
 
-// === 리더: Cmd/Ctrl+K 검색 ===
+// === 리더: Cmd/Ctrl+K 검색 (자동완성 포함) ===
 // 리더 페이지엔 사이트 검색창이 없어서 자체 입력창을 띄움 (모양은 제목 제외 입력창과 같은 공통 스타일)
 // Enter = 현재 탭에서 검색 / ⌘·Ctrl+Enter = 새 탭 / Esc = 닫기. language:korean 은 자동 포함
+// 자동완성 (마지막 단어 기준, 한글로도 찾음):
+//  - 태그: 한글 태그 사전 + 내 태그 규칙 → female:/male:/tag: 형식 (성별을 모르면 female·male 둘 다)
+//  - 작가: 즐겨찾기 작가 + 즐겨찾기 작품의 작가 → artist:
+//  - 최근 검색: 검색 결과 페이지에 들어갈 때마다 기록 (입력이 비었거나 앞부분이 같을 때)
+//  ↑↓ 선택 · Tab/Enter 로 넣기 (선택 없이 Enter = 검색) · '-' 로 시작하면 제외 조건 그대로 유지
 function setupReaderSearch() {
+	const MAX = 8;
+	const toVal = (prefix, name) => `${prefix}:${name.trim().replace(/\s+/g, '_')}`;
+
+	function buildIndex() {
+		const items = new Map();
+		const add = (value, label, kind) => {
+			if (!value || items.has(value)) return;
+			const name = value.replace(/^[a-z]+:/, '').replace(/_/g, ' ');
+			items.set(value, { value, label, kind, name: name.toLowerCase(), lab: (label || '').toLowerCase() });
+		};
+		// 태그 종류: 목록에서 본 태그 기록(hitomi_tag_ns) + 규칙 목록의 ♀/♂
+		const ns = new Map(); // 영문 태그 -> Set(female|male|tag)
+		Object.entries(readJSON(TAG_NS_KEY, {}) || {}).forEach(([t, arr]) => Array.isArray(arr) && ns.set(t, new Set(arr)));
+		[...getFilterTags(), ...getBlockTags(), ...getHighlightTags()].forEach((t) => {
+			const m = String(t).match(/^(.*?)\s*([♀♂])$/);
+			const en = (m ? m[1] : t).trim();
+			if (!en) return;
+			if (!ns.has(en)) ns.set(en, new Set());
+			ns.get(en).add(m ? (m[2] === '♀' ? 'female' : 'male') : 'tag');
+		});
+		const ko = getTagKo();
+		for (const en of new Set([...Object.keys(ko), ...ns.keys()])) {
+			const label = ko[en] || '';
+			const gs = ns.get(en) || new Set(['female', 'male']); // 종류를 모르면 female·male 둘 다
+			gs.forEach((g) => add(toVal(g, en), label ? `${label}${g === 'female' ? ' ♀' : g === 'male' ? ' ♂' : ''}` : '', 'tag'));
+		}
+		// 작가
+		const artists = new Set([...getFavArtists(), ...getFavGalleries().flatMap((g) => g.artists || [])]);
+		artists.forEach((a) => a && add(toVal('artist', a), '작가', 'artist'));
+		return [...items.values()];
+	}
+	const history = () => readJSON('hitomi_search_history', []).filter((x) => typeof x === 'string');
+
+	function suggest(text, index) {
+		const parts = text.split(/\s+/);
+		const last = parts[parts.length - 1] || '';
+		const neg = last.startsWith('-');
+		const term = last.replace(/^-/, '').toLowerCase().replace(/_/g, ' ');
+		const out = [];
+		// 최근 검색: 입력 전체 기준
+		const whole = text.trim().toLowerCase();
+		history()
+			.filter((q) => !whole || (q.toLowerCase().startsWith(whole) && q.toLowerCase() !== whole))
+			.slice(0, whole ? 3 : MAX)
+			.forEach((q) => out.push({ value: q, label: '최근 검색', kind: 'history', whole: true }));
+		if (!term) return out.slice(0, MAX);
+		// 접두어(female: 등)까지 친 경우 그 종류만
+		const pm = term.match(/^([a-z]+):(.*)$/);
+		const kindPrefix = pm ? pm[1] : null;
+		const q = pm ? pm[2] : term;
+		const ranked = [];
+		for (const it of index) {
+			if (kindPrefix && !it.value.startsWith(kindPrefix + ':')) continue;
+			let r = -1;
+			if (!q) r = 3;
+			else if (it.name.startsWith(q)) r = 0;
+			else if (it.lab.startsWith(q)) r = 1;
+			else if (it.name.includes(q) || it.lab.includes(q)) r = 2;
+			if (r >= 0) ranked.push([r, it]);
+		}
+		ranked.sort((a, b) => a[0] - b[0] || a[1].value.length - b[1].value.length);
+		ranked.slice(0, MAX).forEach(([, it]) => out.push({ ...it, value: (neg ? '-' : '') + it.value }));
+		return out.slice(0, MAX + 3);
+	}
+
 	function open() {
 		const existing = document.getElementById('hh-title-prompt');
 		if (existing) return existing.querySelector('input')?.focus();
+		const index = buildIndex();
 		const box = document.createElement('div');
 		box.id = 'hh-title-prompt';
 		const title = Object.assign(document.createElement('div'), { className: 'hh-title', textContent: '검색 (language:korean 자동 포함)' });
 		const input = Object.assign(document.createElement('input'), {
 			type: 'text',
-			placeholder: '예) artist:이름  female:태그  제목',
+			placeholder: '예) 큰 가슴 / artist:이름 / female:태그 / 제목',
 			spellcheck: false,
 			autocomplete: 'off',
 		});
-		const hint = Object.assign(document.createElement('div'), { className: 'hh-hint', textContent: 'Enter 검색 · ⌘Enter 새 탭 · Esc 닫기' });
+		const listEl = Object.assign(document.createElement('div'), { className: 'hh-suggest' });
+		const hint = Object.assign(document.createElement('div'), {
+			className: 'hh-hint',
+			textContent: '↑↓ 선택 · Tab 넣기 · Enter 검색 · ⌘Enter 새 탭 · Esc 닫기',
+		});
+		let rows = [];
+		let sel = -1;
+
+		function render() {
+			rows = suggest(input.value, index);
+			sel = -1;
+			listEl.replaceChildren(
+				...rows.map((r, i) => {
+					const row = document.createElement('div');
+					row.className = `row kind-${r.kind}`;
+					row.append(
+						Object.assign(document.createElement('span'), { className: 'v', textContent: r.value }),
+						Object.assign(document.createElement('span'), { className: 'k', textContent: r.label || '' })
+					);
+					row.addEventListener('mousedown', (e) => {
+						e.preventDefault(); // 입력창 포커스 유지
+						pick(i);
+					});
+					return row;
+				})
+			);
+			listEl.hidden = !rows.length;
+		}
+		function highlight() {
+			[...listEl.children].forEach((el, i) => el.classList.toggle('on', i === sel));
+			listEl.children[sel]?.scrollIntoView({ block: 'nearest' });
+		}
+		function pick(i) {
+			const r = rows[i];
+			if (!r) return;
+			if (r.whole) input.value = r.value + ' ';
+			else {
+				const parts = input.value.split(/\s+/);
+				parts[parts.length - 1] = r.value;
+				input.value = parts.join(' ') + ' ';
+			}
+			input.focus();
+			render();
+		}
+		function search(newTab) {
+			const q = input.value.trim();
+			if (!q) return;
+			const url = searchUrl(q);
+			close();
+			if (newTab) {
+				if (typeof GM_openInTab === 'function') GM_openInTab(url, { active: true, insert: true });
+				else window.open(url, '_blank');
+			} else location.href = url;
+		}
 		const close = () => box.remove();
+
+		input.addEventListener('input', render);
 		input.addEventListener('keydown', (e) => {
 			e.stopPropagation(); // 리더 단축키(A/D/S/F …)로 새지 않게
 			if (e.isComposing) return;
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				close();
-				return;
+			} else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault();
+				if (!rows.length) return;
+				sel = e.key === 'ArrowDown' ? (sel + 1) % rows.length : (sel - 1 + rows.length) % rows.length;
+				highlight();
+			} else if (e.key === 'Tab') {
+				if (!rows.length) return;
+				e.preventDefault();
+				pick(sel >= 0 ? sel : 0);
+			} else if (e.key === 'Enter') {
+				e.preventDefault();
+				if (sel >= 0 && !(e.metaKey || e.ctrlKey)) pick(sel);
+				else search(e.metaKey || e.ctrlKey);
 			}
-			if (e.key !== 'Enter') return;
-			e.preventDefault();
-			const q = input.value.trim();
-			if (!q) return;
-			const url = searchUrl(q);
-			close();
-			if (e.metaKey || e.ctrlKey) {
-				if (typeof GM_openInTab === 'function') GM_openInTab(url, { active: true, insert: true });
-				else window.open(url, '_blank');
-			} else location.href = url;
 		});
 		input.addEventListener('blur', () => setTimeout(close, 100));
-		box.append(title, input, hint);
+		box.append(title, input, listEl, hint);
 		document.body.appendChild(box);
+		render();
 		input.focus();
 	}
 	// capture: 리더 넘김 키 처리보다 먼저
