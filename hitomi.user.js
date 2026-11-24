@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.48
+// @version      7.49
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.48';
+const HH_VERSION = '7.49';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -38,8 +38,6 @@ if (window === top) (document.head || document.documentElement).appendChild(
   Object.assign(document.createElement('style'), { textContent: `
 /* ================= 사이트 보정 ================= */
 .hh-filtered, .gallery-content > .hh-filtered { display: none !important; }
-/* 중복 숨김: '.dj, .manga { display: flow-root !important }' 보다 우선순위 높게 */
-.gallery-content > .hh-dup { display: none !important; }
 .gallery-content > .hh-omni-dup, .gallery-content > .hh-omni-fav-dup { display: none !important; } /* 총집편에 포함된 편 */
 .relatedtags li.hidden-list-item { display: inline-block !important; }
 .relatedtags li:has(> a[href*="/reader/"]) { display: none !important; }
@@ -2044,7 +2042,7 @@ function decoratePageCounts() {
 	const map = getPageCounts();
 	document.querySelectorAll('.gallery-content > div h1.lillie').forEach((h1) => {
 		const card = h1.closest('.gallery-content > div');
-		if (!card || card.classList.contains('hh-filtered') || card.classList.contains('hh-dup')) return;
+		if (!card || card.classList.contains('hh-filtered')) return;
 		const id = cardGalleryId(card);
 		if (!id) return;
 		const n = map[id];
@@ -2782,7 +2780,7 @@ function openInBackground(url) {
 	}
 }
 
-// 현재 목록에서 화면에 보이는 카드(숨김/중복 숨김 제외)를 백그라운드 탭으로 열기
+// 현재 목록에서 화면에 보이는 카드(숨김 제외)를 백그라운드 탭으로 열기
 // onlyHighlighted: 연두 타이틀 카드만 / false 면 방문 여부·색 상관없이 전부
 function openCardsInBackground({ onlyHighlighted = false } = {}) {
 	const visited = JSON.parse(localStorage.getItem('hitomi') || '[]');
@@ -2790,7 +2788,7 @@ function openCardsInBackground({ onlyHighlighted = false } = {}) {
 	const targets = [];
 	const sel = onlyHighlighted ? '.gallery-content > .hh-hl:not(.hh-filtered)' : '.gallery-content > div:not(.hh-filtered)';
 	document.querySelectorAll(sel).forEach((card) => {
-		if (card.offsetParent === null) return; // display:none (중복 숨김 등)
+		if (card.offsetParent === null) return; // display:none (숨김 규칙 등)
 		const url = card.querySelector('h1.lillie a')?.href;
 		if (!url || seen.has(url)) return;
 		seen.add(url);
@@ -2969,78 +2967,6 @@ function replaceLinks(root = document) {
 }
 
 const MINOR_TAG_RE = /loli/;
-
-// === 중복 숨김 ===
-// 화면에 보이는 제목(한글 축약 후, 띄어쓰기·문장부호 무시)이 같으면 하나만 남김
-// 예) "Set | 셋" / "Setto | 셋" → 둘 다 "셋" 으로 보이므로 두 번째 숨김
-// (decensored) 표기는 빼고 비교하고, 같은 제목이면 decensored 판을 남김 (없으면 먼저 나온 것)
-// 예) "제목" / "제목 (decensored)" → "제목" 숨김
-const DECENSORED_STRIP_RE = /[\[(（【]\s*decensored\s*[\])）】]|\bdecensored\b/gi;
-const DECENSORED_TEST_RE = /\bdecensored\b/i;
-function hideDjOnDuplicate() {
-	const pages = getPageCounts();
-	const norm = (t) => t.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-	const entries = [];
-	const groups = new Map();
-	document.querySelectorAll('.lillie a').forEach((a) => {
-		const raw = origTitle(a);
-		const clean = raw.replace(DECENSORED_STRIP_RE, ' ');
-		// 띄어쓰기·문장부호 차이는 무시 ("좋을걸" = "좋을 걸")
-		const key = norm(koreanTitle(clean));
-		if (!key) return;
-		const card = a.closest('.gallery-content > div') || a.closest('div');
-		if (!card) return;
-		// 로마자/영문 원제 (번역판끼리 같은 경우가 많음)
-		const latinSeg = clean.split('|').map((x) => x.trim()).find((x) => /[a-z]/i.test(x) && !HANGUL_RE.test(x)) || '';
-		const e = {
-			card,
-			key,
-			dec: DECENSORED_TEST_RE.test(raw),
-			id: cardGalleryId(card),
-			latin: norm(latinSeg.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')),
-			artists: new Set(cardArtists(card).map((x) => x.toLowerCase())),
-			ch: chapterNo({ title: clean }),
-		};
-		entries.push(e);
-		if (!groups.has(key)) groups.set(key, []);
-		groups.get(key).push(e);
-	});
-
-	const hide = new Set();
-	// 1) 화면 제목이 같은 것: 하나만 남김 (decensored 우선, 없으면 먼저 나온 것). 작가 페이지 포함
-	groups.forEach((list) => {
-		const keep = list.find((x) => x.dec) || list[0];
-		list.forEach((e) => e !== keep && hide.add(e));
-	});
-
-	// 2) decensored 판이 있으면 같은 작품의 다른 번역/판도 숨김
-	//    같은 작가 + 같은 회차 + (원제 동일 | 제목 유사도: 페이지 수 ±3 이면 0.5↑, 페이지 수 모르면 0.75↑)
-	//    예) "다음은, 더 기분 좋을걸 (Decensored)" 가 있으면 "다음에는, 더 기분 좋을거야", "다음은, 좀더 기분 좋을걸" 숨김
-	const decs = entries.filter((e) => e.dec && !hide.has(e));
-	if (decs.length) {
-		entries.forEach((e) => {
-			if (e.dec || hide.has(e)) return;
-			const same = decs.some((d) => {
-				if (![...d.artists].some((x) => e.artists.has(x))) return false;
-				if ((d.ch ?? 1) !== (e.ch ?? 1)) return false;
-				if (d.latin && d.latin.length >= 6 && d.latin === e.latin) return true;
-				const sim = dice(d.key, e.key);
-				const pd = d.id && pages[d.id];
-				const pe = e.id && pages[e.id];
-				return pd && pe ? Math.abs(pd - pe) <= 3 && sim >= 0.5 : sim >= 0.75;
-			});
-			if (same) hide.add(e);
-		});
-	}
-
-	// 적용: 클래스 토글 (바뀔 때만 → Observer 루프 방지)
-	// ※ inline style.display='none' 은 사이트 보정 CSS '.dj, .manga { display: flow-root !important }' 에 져서 안 숨겨졌음
-	entries.forEach((e) => {
-		const on = hide.has(e);
-		if (e.card.classList.contains('hh-dup') !== on) e.card.classList.toggle('hh-dup', on);
-	});
-}
-
 
 // =====================================================================
 // === 플로팅 설정 패널 (우측 하단, 마우스가 가까이 오면 버튼 표시) ===
@@ -4279,7 +4205,6 @@ if (isReader || IS_LIST_PAGE) setupKeyHints();
 if (!isReader) {
 	// === 초기 실행 ===
 	replaceLinks();
-	hideDjOnDuplicate();
 	applyKoreanTitles();
 	hijackTagLinks(); // data-tag 세팅이 먼저
 	applyTagRules();
@@ -4298,7 +4223,6 @@ if (!isReader) {
 	const reapplyRules = () => {
 		applyTagRules();
 		sortTagLists();
-		hideDjOnDuplicate();
 	};
 	document.addEventListener('hh-rules-changed', reapplyRules);
 	window.addEventListener('storage', (e) => {
@@ -4312,7 +4236,6 @@ if (!isReader) {
 	let scheduled = false;
 	const flush = () => {
 		scheduled = false;
-		hideDjOnDuplicate();
 		applyKoreanTitles();
 		hijackTagLinks();
 		applyTagRules();
