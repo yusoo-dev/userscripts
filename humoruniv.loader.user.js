@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대 (자동 업데이트 로더)
 // @namespace    https://github.com/yusoo-dev/userscripts
-// @version      1.6.0
+// @version      1.7.0
 // @description  GitHub의 최신 웃대 스크립트를 받아 실행합니다. 한 번 설치하면 업데이트 확인이 필요 없습니다.
 // @match        *://*.humoruniv.com/*
 // @match        *://humoruniv.com/*
@@ -31,7 +31,7 @@
   // 진단 모드: 주소 끝에 #uwloader 를 붙여 열면 상세 상태를 화면에 표시
   const DEBUG = location.hash === '#uwloader'
     || (() => { try { return localStorage.getItem('uw-loader:debug') === '1'; } catch { return false; } })();
-  const LOADER_VERSION = '1.6.0';
+  const LOADER_VERSION = '1.7.0';
   const diag = [];
   const log = (m) => { diag.push(m); };
   const API_SHA = 'https://api.github.com/repos/yusoo-dev/userscripts/commits/main';
@@ -44,6 +44,11 @@
     () => `https://api.github.com/repos/yusoo-dev/userscripts/contents/humoruniv.user.js?ref=main&t=${Date.now()}`,
   ];
   const KEY_CODE = 'uw-loader:code';
+  const KEY_SAVED_AT = 'uw-loader:savedAt';
+  // 저장된 코드가 이만큼 오래됐으면(오랜만에 열었거나 다른 주소로 들어와 예전 코드가 남은 경우)
+  // 옛 버전을 먼저 실행하지 않고 최신을 받아서 실행. 받기가 늦거나 실패하면 저장된 코드로 대체.
+  const STALE_MS = 3 * 60 * 60 * 1000;
+  const STALE_WAIT_MS = 4000;
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -129,8 +134,16 @@
 
   const cached = store.get(KEY_CODE);
   const runningVer = cached ? versionOf(cached) : null;
-  const ran = cached ? run(cached) : false;
-  log(`로더 v${LOADER_VERSION} · 저장된 본체 v${runningVer || '없음'} · 실행 ${ran ? '성공' : '안 함/실패'}`);
+  const savedAt = Number(store.get(KEY_SAVED_AT)) || 0;
+  const stale = !cached || Date.now() - savedAt > STALE_MS;
+  let ran = false;
+  if (!stale) ran = run(cached);
+  log(`로더 v${LOADER_VERSION} · ${location.host} · 저장된 본체 v${runningVer || '없음'} · 저장 ${savedAt ? Math.round((Date.now() - savedAt) / 60000) + '분 전' : '시각 없음'} · ${stale ? '오래됨→최신 먼저 받기' : '즉시 실행'}`);
+  // 오래된 코드: 최신을 기다리되 STALE_WAIT_MS 안에 못 받으면 저장된 코드로 실행
+  let staleTimer = null;
+  if (stale && cached) {
+    staleTimer = setTimeout(() => { if (!ran) { ran = run(cached); log('받기 지연 → 저장된 코드로 실행'); } }, STALE_WAIT_MS);
+  }
 
   // 진단 결과 표시(DEBUG일 때)
   function showDiag(extra) {
@@ -156,7 +169,12 @@
   fetchLatest()
     .then((code) => {
       const latestVer = versionOf(code);
-      if (code === cached) { showDiag(`결과: 최신(v${latestVer})과 같음 → 변경 없음`); return; }
+      clearTimeout(staleTimer);
+      store.set(KEY_SAVED_AT, String(Date.now())); // 최신 확인 시각(변경이 없어도 갱신)
+      if (code === cached) {
+        if (!ran) ran = run(code);
+        showDiag(`결과: 최신(v${latestVer})과 같음 → 변경 없음`); return;
+      }
       const saved = store.set(KEY_CODE, code);
       const verify = versionOf(store.get(KEY_CODE));
       showDiag(`결과: v${latestVer} 저장 ${saved ? '성공' : '실패'} (다시 읽은 버전 v${verify})`);
@@ -167,5 +185,9 @@
       window.dispatchEvent(ev);
       if (!ev.detail.handled) toast(`새 버전 v${latestVer} 받음 (현재 v${runningVer}) · 탭하면 바로 적용`, () => location.reload());
     })
-    .catch((e) => { showDiag(`결과: 실패 · ${e.message}`); toast(`로더: 업데이트 확인 실패 · ${e.message}`); });
+    .catch((e) => {
+      clearTimeout(staleTimer);
+      if (!ran && cached) ran = run(cached); // 받기 실패 → 저장된 코드라도 실행
+      showDiag(`결과: 실패 · ${e.message}`); toast(`로더: 업데이트 확인 실패 · ${e.message}`);
+    });
 })();
