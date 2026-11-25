@@ -1176,7 +1176,7 @@ async function translateBatch(tags) {
 
 function queueAutoTranslate(tags) {
 	tags.forEach((t) => {
-		if (!autoFailed.has(t) && !MINOR_TAG_RE.test(t)) autoPending.add(t);
+		if (!autoFailed.has(t)) autoPending.add(t);
 	});
 	if (!autoRunning && autoPending.size) runAutoTranslate();
 }
@@ -2889,20 +2889,7 @@ function replaceLinks(root = document) {
 			const m = href.match(/-(\d+)\.html(?:$|[?#])/);
 			if (m) this.href = `https://hitomi.la/reader/${m[1]}.html#1-`;
 		});
-
-	// 미성년 관련 태그 항목 제거 (번역 후에도 걸리도록 원문 data-tag 기준)
-	$root
-		.find('a')
-		.filter(function () {
-			const t = (this.getAttribute('data-tag') || this.textContent).toLowerCase();
-			return MINOR_TAG_RE.test(t);
-		})
-		.each(function () {
-			$(this).closest('div.dj, div.imageset, div.manga, div.acg').remove();
-		});
 }
-
-const MINOR_TAG_RE = //;
 
 // =====================================================================
 // === 플로팅 설정 패널 (우측 하단, 마우스가 가까이 오면 버튼 표시) ===
@@ -3183,7 +3170,6 @@ function setupSettingsPanel({ corner = 'bottom' } = {}) {
 		const artists = info.artists.filter((a) => a.name);
 		const hlSet = new Set(getHighlightTags());
 		const tags = info.tags
-			.filter((t) => t.tag && !MINOR_TAG_RE.test(t.tag.toLowerCase()))
 			.map((t, i) => ({ t, i, r: tagSortRank(t.gender ? `${t.tag} ${t.gender}` : t.tag, t.url || '', hlSet) }))
 			.sort((a, b) => a.r - b.r || a.i - b.i)
 			.map((x) => x.t);
@@ -3303,7 +3289,6 @@ function setupSettingsPanel({ corner = 'bottom' } = {}) {
 		const add = () => {
 			const v = norm(input.value);
 			if (!v) return;
-			if (MINOR_TAG_RE.test(v)) return notify('추가할 수 없는 항목입니다');
 			const cur = getTagList(l.key);
 			if (cur.includes(v)) return notify('이미 있는 항목입니다');
 			saveList(l.key, [...cur, v]);
