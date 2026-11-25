@@ -2902,7 +2902,7 @@ function replaceLinks(root = document) {
 		});
 }
 
-const MINOR_TAG_RE = /loli/;
+const MINOR_TAG_RE = //;
 
 // =====================================================================
 // === 플로팅 설정 패널 (우측 하단, 마우스가 가까이 오면 버튼 표시) ===
