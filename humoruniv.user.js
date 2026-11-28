@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.47.1
+// @version      1.48.0
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -66,7 +66,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.47.1';
+  const SCRIPT_VERSION = '1.48.0';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -172,8 +172,11 @@
    * ────────────────────────────────────────────────────────── */
 
   // 이미 EUC-KR 인코딩된 sk를 직접 이어붙임(URLSearchParams는 UTF-8로 인코딩하므로 사용 불가)
+  // 검색 주소의 sk는 글자 그대로(UTF-8) — 주소창에 'sk=ㅇㅎ'로 보이고 사이트도 자음 검색이 됨.
+  //  (내부 저장 키는 예전 EUC-KR 표기를 유지: 읽은 기록·새 글 표시 호환)
+  const skUrl = (sk) => encodeURIComponent(decodeEucKr(sk));
   function buildSearchUrl(sk) {
-    return `/board/list.html?table=${SEARCH_TABLE}&st=subject&searchday=${SEARCH_DAY}&sk=${sk}`;
+    return `/board/list.html?table=${SEARCH_TABLE}&st=subject&searchday=${SEARCH_DAY}&sk=${skUrl(sk)}`;
   }
 
   // 현재 URL의 sk 원문(인코딩된 그대로)
@@ -186,6 +189,8 @@
   // EUC-KR 퍼센트 인코딩 → 문자열
   function decodeEucKr(raw) {
     if (!raw) return '';
+    // UTF-8 표기(%E3%85%87… 또는 글자 그대로)면 그대로 해석. EUC-KR 바이트는 여기서 오류 → 아래로.
+    try { return decodeURIComponent(String(raw).replace(/\+/g, ' ')); } catch {}
     try {
       const bytes = [];
       const str = raw.replace(/\+/g, ' ');
@@ -264,7 +269,7 @@
     }
 
     // ㅇㅎ / ㅎㅂ
-    const currentSk = currentRawSk().toUpperCase();
+    const currentSk = normSk(currentRawSk());
     for (const { label, sk } of QUICK_SEARCH_KEYWORDS) {
       const qb = navBtn(label, buildSearchUrl(sk), currentSk === sk.toUpperCase());
       qb.dataset.uwNewKey = listKey(SEARCH_TABLE, sk);
@@ -326,7 +331,7 @@
     const form = document.createElement('form');
     form.method = 'get';
     form.action = '/board/list.html';
-    form.acceptCharset = 'euc-kr';
+    form.acceptCharset = 'utf-8'; // 글자 그대로 검색(자음 포함)
     css(form, {
       display: 'flex', 'align-items': 'center', gap: '8px', width: 'min(92vw, 420px)',
       margin: '0', padding: '10px', background: '#2a2a2a', 'border-radius': '12px',
@@ -1011,7 +1016,7 @@
   async function goListUnread(key, btn) {
     const [t, sk] = key.split('|');
     const listUrl = new URL(sk
-      ? `/board/list.html?table=${t}&st=subject&searchday=${SEARCH_DAY}&sk=${sk}`
+      ? `/board/list.html?table=${t}&st=subject&searchday=${SEARCH_DAY}&sk=${skUrl(sk)}`
       : `/board/list.html?table=${t}`, location.href).href;
     // 검색 목록(ㅇㅎ·ㅎㅂ)도 검색 대신 일반 목록을 훑으며 제목으로 거름(검색 제한 회피)
     const kw = kwFromSk(sk);
@@ -1243,7 +1248,7 @@
     const seen = Number(store2.get(`uw-seen:${key}`)) || 0;
     if (!seen) return null;
     let doc;
-    try { doc = await fetchDoc(`/board/list.html?table=${t}&st=subject&searchday=${SEARCH_CHECK_DAY}&sk=${sk}`); }
+    try { doc = await fetchDoc(`/board/list.html?table=${t}&st=subject&searchday=${SEARCH_CHECK_DAY}&sk=${skUrl(sk)}`); }
     catch { return null; } // 30초 간격 제한·검색 차단 중이면 이번엔 생략
     const blocked = blockedNicksFor(t);
     const hideAi = hideAiFor(`?table=${t}&sk=${sk}`);
@@ -1277,7 +1282,7 @@
     const sk = currentRawSk();
     if (!sk) return;
     const key = listKey(table, sk);
-    if (table !== SEARCH_TABLE || !QUICK_SEARCH_KEYWORDS.some((q) => q.sk.toUpperCase() === sk.toUpperCase())) return;
+    if (table !== SEARCH_TABLE || !QUICK_SEARCH_KEYWORDS.some((q) => q.sk.toUpperCase() === normSk(sk))) return;
     const seen = Number(store2.get(`uw-seen:${key}`)) || 0;
     const read = readSetFor(table);
     const blocked = blockedNicksFor(table);
@@ -2325,7 +2330,7 @@
     const u = String(url || '');
     const t = (u.match(/[?&]table=([^&#]*)/) || [])[1];
     const sk = ((u.match(/[?&]sk=([^&#]*)/) || [])[1] || '').toUpperCase();
-    return HIDE_AI_SEARCHES.some((h) => h.table === t && h.sk.toUpperCase() === sk);
+    return HIDE_AI_SEARCHES.some((h) => h.table === t && h.sk.toUpperCase() === normSk(sk));
   }
   const HIDE_AI_HERE = isList && hideAiFor(location.href);
   // 'ai'가 독립된 표기일 때만(AI), .ai, ai그림 등). mail·daily처럼 영어 단어 속 ai는 제외.
