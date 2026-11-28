@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.51
+// @version      7.52
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.51';
+const HH_VERSION = '7.52';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -3875,6 +3875,30 @@ function setupFavSidebar() {
 
 // === 검색창 오버레이 (Cmd/Ctrl+K) ===
 // 상단 바는 CSS로 숨기고, 원래 위치의 .header-table 을 fixed 로 띄움 (DOM 이동 없음)
+// 지금 보고 있는 목록의 검색어 (language:korean 제외)
+//  - 검색 결과: search.html?<검색어>
+//  - 태그/작가/시리즈/그룹/캐릭터/종류 페이지: /tag/female:big breasts-korean.html → female:big_breasts
+function currentPageQuery() {
+	const path = location.pathname;
+	if (path === '/search.html') {
+		const raw = location.search.slice(1);
+		let q = raw;
+		try {
+			q = decodeURIComponent(raw.replace(/\+/g, ' '));
+		} catch {}
+		return stripForcedLang(q).trim();
+	}
+	const m = path.match(/^\/(tag|artist|series|group|character|type)\/(.+?)-(?:korean|all)(?:-\d+)?\.html$/);
+	if (!m) return '';
+	let name = m[2];
+	try {
+		name = decodeURIComponent(name);
+	} catch {}
+	name = name.trim().replace(/\s+/g, '_');
+	if (m[1] === 'tag') return /^(female|male):/.test(name) ? name : `tag:${name}`;
+	return `${m[1]}:${name}`;
+}
+
 function setupSearchOverlay() {
 	const root = document.documentElement;
 	setupKoreanTagSuggest();
@@ -3894,9 +3918,16 @@ function setupSearchOverlay() {
 		}
 		closeTagMenu();
 		cleanSearchInput();
+		// 지금 페이지의 검색어를 미리 채움 (입력창이 비어 있을 때만 → 직접 고치던 내용은 유지)
+		if (!input.value.trim()) {
+			const q = currentPageQuery();
+			if (q) input.value = q + ' ';
+		}
 		root.classList.add('hh-search-open');
 		input.focus();
-		input.select();
+		// 이어서 입력하기 좋게 커서를 끝으로
+		const end = input.value.length;
+		input.setSelectionRange(end, end);
 	}
 	function close() {
 		if (!isOpen()) return;
