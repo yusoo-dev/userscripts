@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.53
+// @version      7.54
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.53';
+const HH_VERSION = '7.54';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -4602,11 +4602,25 @@ function setupKoreanTagSuggest() {
 		},
 		true
 	);
+	// 사이트 검색창은 Enter/화살표를 keyup 에서 처리함 (Enter → 선택 항목 클릭, 없으면 검색 버튼 클릭)
+	// → 우리가 keydown 에서 처리한 키는 뒤따르는 keyup 도 삼켜야 '넣기만 하고 검색은 안 함'이 됨
+	const swallowKeyup = new Set();
+	document.addEventListener(
+		'keyup',
+		(e) => {
+			if (e.target?.id !== 'query-input' || !swallowKeyup.has(e.key)) return;
+			swallowKeyup.delete(e.key);
+			e.preventDefault();
+			e.stopImmediatePropagation();
+		},
+		true
+	);
 	// capture: 사이트 자동완성/검색 처리보다 먼저 (추천 목록이 떠 있을 때만 가로챔)
 	document.addEventListener(
 		'keydown',
 		(e) => {
 			if (e.target?.id !== 'query-input' || !visible() || e.isComposing) return;
+			if (['ArrowDown', 'ArrowUp', 'Tab', 'Enter', 'Escape'].includes(e.key)) swallowKeyup.add(e.key);
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				e.preventDefault();
 				e.stopImmediatePropagation();
