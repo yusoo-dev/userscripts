@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.52
+// @version      7.53
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.52';
+const HH_VERSION = '7.53';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -2079,21 +2079,6 @@ function decoratePageCounts() {
 		}
 		badge.textContent = text;
 	});
-	arrangeOmnibus();
-}
-
-// 총집편 카드를 목록 맨 위로 (총집편끼리는 원래 순서 유지)
-function arrangeOmnibus() {
-	const box = document.querySelector('.gallery-content');
-	if (!box) return;
-	const map = getPageCounts();
-	const cards = [...box.children].filter((c) => c.tagName === 'DIV');
-	const omni = cards.filter((card) => {
-		const id = cardGalleryId(card);
-		return id && (map[id] || 0) >= OMNIBUS_PAGES;
-	});
-	// 순서가 다를 때만 이동 → MutationObserver 루프 방지
-	if (omni.length && omni.some((card, i) => cards[i] !== card)) box.prepend(...omni);
 }
 
 // 있으면 제거, 없으면 추가. 반환값: 토글 후 포함 여부
