@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         웃대
 // @namespace    https://greasyfork.org/users/your-username
-// @version      1.48.0
+// @version      1.48.1
 // @description  레이아웃 정리, 더보기 자동 클릭(최대 50p, 목록 페이지 전용), OK 수 기준 게시글 숨기기, ㅇㅎ/ㅎㅂ AI글 흐리게, 댓글 강조/0추천·0비추천 그룹 숨김, 답글 베스트 박스 숨김, 상세페이지 하단 목록 숨김, 상단 내비(게시판 이동·ㅇㅎ/ㅎㅂ·검색 팝업), 동영상 소리 자동 켜기·단일 재생·탭 재생/정지·길게 눌러 2배속·화면 노출 자동재생(MP4 썸네일 자동 펼침)·미니 컨트롤 바·같은 영상 재생 위치 동기화, 필터/검색 기준 이전글·다음글, 불필요 요소 숨김·header-bar 보정, 작성자 차단
 // @match        *://*/*
 // @grant        none
@@ -18,6 +18,17 @@
   // 중복 실행 방지(로더와 일반 설치본이 함께 있을 때 등)
   if (window.__uwHumorunivLoaded) return;
   window.__uwHumorunivLoaded = true;
+
+  // 예전 EUC-KR 검색 주소(sk=%A4%B7%A4%BE 등: 북마크·방문 기록)로 들어오면 결과가 없음 → UTF-8 주소로 바로 교체
+  {
+    const m = location.search.match(/[?&]sk=([^&#]*)/);
+    let bad = false;
+    if (m) { try { decodeURIComponent(m[1]); } catch { bad = true; } }
+    if (bad) {
+      const txt = decodeEucKr(m[1]);
+      if (txt) { location.replace(location.href.replace(/([?&]sk=)[^&#]*/, `$1${encodeURIComponent(txt)}`)); return; }
+    }
+  }
 
   /* ──────────────────────────────────────────────────────────
    * 1. 설정 (Config)
@@ -66,7 +77,7 @@
    * ────────────────────────────────────────────────────────── */
 
   // 상단 메뉴 오른쪽 끝에 버전 표시(자동 업데이트 확인용). 헤더 @version과 함께 올릴 것.
-  const SCRIPT_VERSION = '1.48.0';
+  const SCRIPT_VERSION = '1.48.1';
   const SHOW_VERSION = true; // 상단 오른쪽 끝 버전 표시
 
   const params = new URLSearchParams(location.search);
@@ -175,6 +186,13 @@
   // 검색 주소의 sk는 글자 그대로(UTF-8) — 주소창에 'sk=ㅇㅎ'로 보이고 사이트도 자음 검색이 됨.
   //  (내부 저장 키는 예전 EUC-KR 표기를 유지: 읽은 기록·새 글 표시 호환)
   const skUrl = (sk) => encodeURIComponent(decodeEucKr(sk));
+  // 사이트가 EUC-KR 검색어(sk=%A4%B7…)를 더 이상 받지 않음 → 주소의 sk를 UTF-8로 바꿈(이미 UTF-8이면 그대로)
+  function utf8SearchUrl(url) {
+    return String(url).replace(/([?&]sk=)([^&#]*)/, (m, p, v) => {
+      try { decodeURIComponent(v); return m; } catch {} // 정상 UTF-8
+      return p + skUrl(v);
+    });
+  }
   function buildSearchUrl(sk) {
     return `/board/list.html?table=${SEARCH_TABLE}&st=subject&searchday=${SEARCH_DAY}&sk=${skUrl(sk)}`;
   }
@@ -939,6 +957,7 @@
 
   // user=true: 사용자가 버튼을 눌러 직접 요청한 검색(검색 목록을 여는 것과 같은 1회) → 간격 제한 없이 허용(차단 중엔 불가)
   async function fetchDoc(url, user = false) {
+    url = utf8SearchUrl(url); // 예전 EUC-KR 검색 주소(저장된 이어 읽기 목록 등)도 UTF-8로
     if (isSearchUrl(url)) {
       if (user) {
         if (Date.now() < (Number(store2.get('uw-search-block-until')) || 0)) throw new Error('search-blocked');
