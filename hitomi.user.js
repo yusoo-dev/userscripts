@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.50
+// @version      7.51
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -25,7 +25,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.50';
+const HH_VERSION = '7.51';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -186,6 +186,22 @@ html.hh-search-open #search-button {
 }
 html.hh-search-open #search-button:hover { background: var(--hh-hover) !important; }
 #hh-search-dim { position: fixed; inset: 0; z-index: 100001; background: rgba(0,0,0,.4); display: none; }
+/* 목록 Cmd+K 한글 태그 추천 */
+#hh-ksuggest {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 100003; max-height: 320px; overflow: auto; overscroll-behavior: contain;
+  padding: 4px; background: var(--hh-bg); border: 1px solid var(--hh-line); border-radius: var(--hh-r); box-shadow: var(--hh-shadow);
+  font: var(--hh-font); color: var(--hh-text); text-align: left;
+}
+#hh-ksuggest[hidden] { display: none; }
+#hh-ksuggest .row, #hh-title-prompt .hh-suggest .row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 5px 8px; border-radius: var(--hh-r-sm); cursor: pointer;
+}
+#hh-ksuggest .row:hover, #hh-ksuggest .row.on { background: var(--hh-hover); }
+#hh-ksuggest .v { color: var(--hh-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+#hh-ksuggest .k { flex: none; color: var(--hh-sub); font-size: 12px; }
+#hh-ksuggest .kind-artist .v { color: var(--hh-artist); }
+#hh-ksuggest .none { padding: 6px 8px; color: var(--hh-dim); }
 html.hh-search-open #hh-search-dim { display: block; }
 
 /* ================= 화면 모서리 위젯: 평소 흐리게(--hh-idle) → 마우스 올리면 또렷하게 ================= */
@@ -3861,6 +3877,7 @@ function setupFavSidebar() {
 // 상단 바는 CSS로 숨기고, 원래 위치의 .header-table 을 fixed 로 띄움 (DOM 이동 없음)
 function setupSearchOverlay() {
 	const root = document.documentElement;
+	setupKoreanTagSuggest();
 	cleanSearchInput();
 	window.addEventListener('load', cleanSearchInput, { once: true });
 	const isOpen = () => root.classList.contains('hh-search-open');
@@ -4407,79 +4424,202 @@ if (isReader) {
 	setupReaderSearch();
 }
 
+// === 검색 자동완성 엔진 (목록 Cmd+K 한글 태그 + 리더 Cmd+K 공용) ===
+//  - 태그: 한글 태그 사전 + 내 태그 규칙 → female:/male:/tag: (목록에서 본 태그 종류 기록 사용, 모르면 female·male 둘 다)
+//  - 작가: 즐겨찾기 작가 + 즐겨찾기 작품의 작가 → artist:
+//  - 최근 검색 (리더에서만)
+//  - 한글은 띄어쓰기 무시하고 비교 ("큰가슴" = "큰 가슴")
+//  - 미성년자를 성적으로 다루는 태그는 자동완성에 넣지 않음
+const SUGGEST_MAX = 8;
+const SUGGEST_EXCLUDE_RE = /loli|shota|toddler|child|\bkid|infant|\bbaby\b|underage|preteen|elementary|kindergarten|로리|쇼타|유아|아동|어린이|초등/i;
+function buildSearchIndex() {
+	const toVal = (prefix, name) => `${prefix}:${name.trim().replace(/\s+/g, '_')}`;
+	const items = new Map();
+	const add = (value, label, kind) => {
+		if (!value || items.has(value)) return;
+		if (kind === 'tag' && (SUGGEST_EXCLUDE_RE.test(value) || SUGGEST_EXCLUDE_RE.test(label || ''))) return;
+		const name = value.replace(/^[a-z]+:/, '').replace(/_/g, ' ');
+		const lab = (label || '').toLowerCase();
+		items.set(value, { value, label, kind, name: name.toLowerCase(), lab, labN: lab.replace(/\s+/g, '') });
+	};
+	// 태그 종류: 목록에서 본 태그 기록(hitomi_tag_ns) + 규칙 목록의 ♀/♂
+	const ns = new Map(); // 영문 태그 -> Set(female|male|tag)
+	Object.entries(readJSON(TAG_NS_KEY, {}) || {}).forEach(([t, arr]) => Array.isArray(arr) && ns.set(t, new Set(arr)));
+	[...getFilterTags(), ...getBlockTags(), ...getHighlightTags()].forEach((t) => {
+		const m = String(t).match(/^(.*?)\s*([♀♂])$/);
+		const en = (m ? m[1] : t).trim();
+		if (!en) return;
+		if (!ns.has(en)) ns.set(en, new Set());
+		ns.get(en).add(m ? (m[2] === '♀' ? 'female' : 'male') : 'tag');
+	});
+	const ko = getTagKo();
+	for (const en of new Set([...Object.keys(ko), ...ns.keys()])) {
+		const label = ko[en] || '';
+		const gs = ns.get(en) || new Set(['female', 'male']); // 종류를 모르면 female·male 둘 다
+		gs.forEach((g) => add(toVal(g, en), label ? `${label}${g === 'female' ? ' ♀' : g === 'male' ? ' ♂' : ''}` : '', 'tag'));
+	}
+	// 작가
+	const artists = new Set([...getFavArtists(), ...getFavGalleries().flatMap((g) => g.artists || [])]);
+	artists.forEach((a) => a && add(toVal('artist', a), '작가', 'artist'));
+	return [...items.values()];
+}
+const searchHistory = () => readJSON('hitomi_search_history', []).filter((x) => typeof x === 'string');
+// text: 입력 전체 (마지막 단어 기준 추천) / withHistory: 최근 검색 포함 여부
+function suggestSearch(text, index, { withHistory = true } = {}) {
+	const parts = text.split(/\s+/);
+	const last = parts[parts.length - 1] || '';
+	const neg = last.startsWith('-');
+	const term = last.replace(/^-/, '').toLowerCase().replace(/_/g, ' ');
+	const out = [];
+	if (withHistory) {
+		const whole = text.trim().toLowerCase();
+		searchHistory()
+			.filter((q) => !whole || (q.toLowerCase().startsWith(whole) && q.toLowerCase() !== whole))
+			.slice(0, whole ? 3 : SUGGEST_MAX)
+			.forEach((q) => out.push({ value: q, label: '최근 검색', kind: 'history', whole: true }));
+	}
+	if (!term) return out.slice(0, SUGGEST_MAX);
+	// 접두어(female: 등)까지 친 경우 그 종류만
+	const pm = term.match(/^([a-z]+):(.*)$/);
+	const kindPrefix = pm ? pm[1] : null;
+	const q = pm ? pm[2] : term;
+	const qN = q.replace(/\s+/g, '');
+	const ranked = [];
+	for (const it of index) {
+		if (kindPrefix && !it.value.startsWith(kindPrefix + ':')) continue;
+		let r = -1;
+		if (!q) r = 3;
+		else if (it.name.startsWith(q)) r = 0;
+		else if (it.labN.startsWith(qN)) r = 1;
+		else if (it.name.includes(q) || it.labN.includes(qN)) r = 2;
+		if (r >= 0) ranked.push([r, it]);
+	}
+	ranked.sort((a, b) => a[0] - b[0] || a[1].value.length - b[1].value.length);
+	ranked.slice(0, SUGGEST_MAX).forEach(([, it]) => out.push({ ...it, value: (neg ? '-' : '') + it.value }));
+	return out.slice(0, SUGGEST_MAX + 3);
+}
+// 입력값의 마지막 단어를 추천 항목으로 바꿈
+function applySuggestion(value, r) {
+	if (r.whole) return r.value + ' ';
+	const parts = value.split(/\s+/);
+	parts[parts.length - 1] = r.value;
+	return parts.join(' ') + ' ';
+}
+
+// === 목록 Cmd+K: 한글로 태그 검색 ===
+// 사이트 검색창(#query-input)에서 마지막 단어에 한글이 있으면 한글 태그 추천 목록을 띄움
+// (영문 입력은 사이트 자체 자동완성 그대로) · ↑↓ 선택 · Tab/Enter 넣기 · Esc 닫기
+function setupKoreanTagSuggest() {
+	const HANGUL = /[가-힣ㄱ-ㆎ]/;
+	let index = null;
+	let box = null;
+	let rows = [];
+	let sel = -1;
+	const input = () => document.getElementById('query-input');
+	const visible = () => !!box && !box.hidden && rows.length > 0;
+
+	function ensureBox(inp) {
+		if (box && box.isConnected) return box;
+		box = document.createElement('div');
+		box.id = 'hh-ksuggest';
+		box.hidden = true;
+		box.addEventListener('mousedown', (e) => e.preventDefault()); // 입력창 포커스 유지
+		(inp.closest('.search-input') || inp.parentElement).appendChild(box);
+		return box;
+	}
+	function hide() {
+		if (box) box.hidden = true;
+		rows = [];
+		sel = -1;
+	}
+	function render() {
+		const inp = input();
+		if (!inp) return;
+		const parts = inp.value.split(/\s+/);
+		const last = parts[parts.length - 1] || '';
+		if (!HANGUL.test(last)) return hide();
+		if (!index) index = buildSearchIndex();
+		rows = suggestSearch(inp.value, index, { withHistory: false });
+		sel = -1;
+		const b = ensureBox(inp);
+		b.replaceChildren(
+			...rows.map((r, i) => {
+				const row = document.createElement('div');
+				row.className = `row kind-${r.kind}`;
+				row.append(
+					Object.assign(document.createElement('span'), { className: 'v', textContent: r.value }),
+					Object.assign(document.createElement('span'), { className: 'k', textContent: r.label || '' })
+				);
+				row.addEventListener('click', () => pick(i));
+				return row;
+			})
+		);
+		if (!rows.length) {
+			b.replaceChildren(Object.assign(document.createElement('div'), { className: 'none', textContent: '일치하는 한글 태그 없음' }));
+		}
+		b.hidden = false;
+	}
+	function highlight() {
+		[...box.children].forEach((el, i) => el.classList.toggle('on', i === sel));
+		box.children[sel]?.scrollIntoView({ block: 'nearest' });
+	}
+	function pick(i) {
+		const inp = input();
+		const r = rows[i];
+		if (!inp || !r) return;
+		inp.value = applySuggestion(inp.value, r);
+		inp.focus();
+		hide();
+	}
+
+	document.addEventListener(
+		'input',
+		(e) => {
+			if (e.target?.id === 'query-input') render();
+		},
+		true
+	);
+	document.addEventListener(
+		'focusout',
+		(e) => {
+			if (e.target?.id === 'query-input') setTimeout(hide, 150);
+		},
+		true
+	);
+	// capture: 사이트 자동완성/검색 처리보다 먼저 (추천 목록이 떠 있을 때만 가로챔)
+	document.addEventListener(
+		'keydown',
+		(e) => {
+			if (e.target?.id !== 'query-input' || !visible() || e.isComposing) return;
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				sel = e.key === 'ArrowDown' ? (sel + 1) % rows.length : (sel - 1 + rows.length) % rows.length;
+				highlight();
+			} else if (e.key === 'Tab' || e.key === 'Enter') {
+				// 한글 단어는 사이트 검색이 못 찾으므로 Enter 도 먼저 태그로 바꿈 (한 번 더 Enter = 검색)
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				pick(sel >= 0 ? sel : 0);
+			} else if (e.key === 'Escape') {
+				e.stopImmediatePropagation();
+				e.preventDefault();
+				hide();
+			}
+		},
+		true
+	);
+	// 사전/규칙이 바뀌면 다음 입력 때 다시 만듦
+	document.addEventListener('hh-rules-changed', () => (index = null));
+}
+
 // === 리더: Cmd/Ctrl+K 검색 (자동완성 포함) ===
 // 리더 페이지엔 사이트 검색창이 없어서 자체 입력창을 띄움 (모양은 제목 제외 입력창과 같은 공통 스타일)
 // Enter = 현재 탭에서 검색 / ⌘·Ctrl+Enter = 새 탭 / Esc = 닫기. language:korean 은 자동 포함
-// 자동완성 (마지막 단어 기준, 한글로도 찾음):
-//  - 태그: 한글 태그 사전 + 내 태그 규칙 → female:/male:/tag: 형식 (성별을 모르면 female·male 둘 다)
-//  - 작가: 즐겨찾기 작가 + 즐겨찾기 작품의 작가 → artist:
-//  - 최근 검색: 검색 결과 페이지에 들어갈 때마다 기록 (입력이 비었거나 앞부분이 같을 때)
-//  ↑↓ 선택 · Tab/Enter 로 넣기 (선택 없이 Enter = 검색) · '-' 로 시작하면 제외 조건 그대로 유지
+// ↑↓ 선택 · Tab/Enter 로 넣기 (선택 없이 Enter = 검색) · '-' 로 시작하면 제외 조건 그대로 유지
 function setupReaderSearch() {
-	const MAX = 8;
-	const toVal = (prefix, name) => `${prefix}:${name.trim().replace(/\s+/g, '_')}`;
-
-	function buildIndex() {
-		const items = new Map();
-		const add = (value, label, kind) => {
-			if (!value || items.has(value)) return;
-			const name = value.replace(/^[a-z]+:/, '').replace(/_/g, ' ');
-			items.set(value, { value, label, kind, name: name.toLowerCase(), lab: (label || '').toLowerCase() });
-		};
-		// 태그 종류: 목록에서 본 태그 기록(hitomi_tag_ns) + 규칙 목록의 ♀/♂
-		const ns = new Map(); // 영문 태그 -> Set(female|male|tag)
-		Object.entries(readJSON(TAG_NS_KEY, {}) || {}).forEach(([t, arr]) => Array.isArray(arr) && ns.set(t, new Set(arr)));
-		[...getFilterTags(), ...getBlockTags(), ...getHighlightTags()].forEach((t) => {
-			const m = String(t).match(/^(.*?)\s*([♀♂])$/);
-			const en = (m ? m[1] : t).trim();
-			if (!en) return;
-			if (!ns.has(en)) ns.set(en, new Set());
-			ns.get(en).add(m ? (m[2] === '♀' ? 'female' : 'male') : 'tag');
-		});
-		const ko = getTagKo();
-		for (const en of new Set([...Object.keys(ko), ...ns.keys()])) {
-			const label = ko[en] || '';
-			const gs = ns.get(en) || new Set(['female', 'male']); // 종류를 모르면 female·male 둘 다
-			gs.forEach((g) => add(toVal(g, en), label ? `${label}${g === 'female' ? ' ♀' : g === 'male' ? ' ♂' : ''}` : '', 'tag'));
-		}
-		// 작가
-		const artists = new Set([...getFavArtists(), ...getFavGalleries().flatMap((g) => g.artists || [])]);
-		artists.forEach((a) => a && add(toVal('artist', a), '작가', 'artist'));
-		return [...items.values()];
-	}
-	const history = () => readJSON('hitomi_search_history', []).filter((x) => typeof x === 'string');
-
-	function suggest(text, index) {
-		const parts = text.split(/\s+/);
-		const last = parts[parts.length - 1] || '';
-		const neg = last.startsWith('-');
-		const term = last.replace(/^-/, '').toLowerCase().replace(/_/g, ' ');
-		const out = [];
-		// 최근 검색: 입력 전체 기준
-		const whole = text.trim().toLowerCase();
-		history()
-			.filter((q) => !whole || (q.toLowerCase().startsWith(whole) && q.toLowerCase() !== whole))
-			.slice(0, whole ? 3 : MAX)
-			.forEach((q) => out.push({ value: q, label: '최근 검색', kind: 'history', whole: true }));
-		if (!term) return out.slice(0, MAX);
-		// 접두어(female: 등)까지 친 경우 그 종류만
-		const pm = term.match(/^([a-z]+):(.*)$/);
-		const kindPrefix = pm ? pm[1] : null;
-		const q = pm ? pm[2] : term;
-		const ranked = [];
-		for (const it of index) {
-			if (kindPrefix && !it.value.startsWith(kindPrefix + ':')) continue;
-			let r = -1;
-			if (!q) r = 3;
-			else if (it.name.startsWith(q)) r = 0;
-			else if (it.lab.startsWith(q)) r = 1;
-			else if (it.name.includes(q) || it.lab.includes(q)) r = 2;
-			if (r >= 0) ranked.push([r, it]);
-		}
-		ranked.sort((a, b) => a[0] - b[0] || a[1].value.length - b[1].value.length);
-		ranked.slice(0, MAX).forEach(([, it]) => out.push({ ...it, value: (neg ? '-' : '') + it.value }));
-		return out.slice(0, MAX + 3);
-	}
+	const buildIndex = buildSearchIndex;
+	const suggest = (text, index) => suggestSearch(text, index);
 
 	function open() {
 		const existing = document.getElementById('hh-title-prompt');
@@ -4529,12 +4669,7 @@ function setupReaderSearch() {
 		function pick(i) {
 			const r = rows[i];
 			if (!r) return;
-			if (r.whole) input.value = r.value + ' ';
-			else {
-				const parts = input.value.split(/\s+/);
-				parts[parts.length - 1] = r.value;
-				input.value = parts.join(' ') + ' ';
-			}
+			input.value = applySuggestion(input.value, r);
 			input.focus();
 			render();
 		}
