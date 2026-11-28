@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI] (자동 업데이트 로더)
 // @namespace    https://github.com/yusoo-dev/userscripts
-// @version      1.1.0
+// @version      1.2.0
 // @description  GitHub의 최신 [HITOMI] 본체를 받아 실행합니다. 푸시 후 새로고침하면 바로 반영 (업데이트 확인 불필요)
 // @match        https://*.hitomi.la/*
 // @require      https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js
@@ -16,6 +16,7 @@
 // @connect      raw.githubusercontent.com
 // @connect      translate.googleapis.com
 // @connect      ltn.gold-usergeneratedcontent.net
+// @connect      gold-usergeneratedcontent.net
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.loader.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.loader.user.js
@@ -38,7 +39,7 @@
 (function () {
 	'use strict';
 
-	const LOADER_VERSION = '1.0.0';
+	const LOADER_VERSION = '1.2.0';
 	const REPO = 'yusoo-dev/userscripts';
 	const FILE = 'hitomi.user.js';
 	const API_SHA = `https://api.github.com/repos/${REPO}/commits/main`;

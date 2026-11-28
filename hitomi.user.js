@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [HITOMI]
 // @namespace    user-js-css
-// @version      7.54
+// @version      7.55
 // @updateURL    https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @downloadURL  https://raw.githubusercontent.com/yusoo-dev/userscripts/main/hitomi.user.js
 // @homepageURL  https://github.com/yusoo-dev/userscripts
@@ -14,6 +14,7 @@
 // @grant        window.close
 // @connect      translate.googleapis.com
 // @connect      ltn.gold-usergeneratedcontent.net
+// @connect      gold-usergeneratedcontent.net
 // @noframes
 // ==/UserScript==
 
@@ -25,7 +26,7 @@ if (window === top) {
 	document.documentElement.setAttribute('data-hh-running', '1');
 }
 // 현재 버전 (헤더 @version 과 같게 유지) — 좌측 상단에 작게 표시
-const HH_VERSION = '7.54';
+const HH_VERSION = '7.55';
 
 // 탭 닫기: 로더로 실행되면 로더가 넘긴 함수(@grant window.close 권한) 사용
 const hhCloseTab = typeof __hhCloseTab === 'function' ? __hhCloseTab : () => window.close();
@@ -664,6 +665,173 @@ function hitomiPrefetch(domain) {
 		schedule();
 	});
 
+	// === 이미지 디스크 캐시 (즐겨찾기 작품만, 최대 5GB) ===
+	// 이미지 주소에는 사이트가 주기적으로 바꾸는 값(gg.b)이 들어가서 며칠 지나면 브라우저 캐시를 못 씀
+	// → 받은 이미지를 Cache Storage 에 '파일 해시' 기준으로 저장, 다시 볼 때 네트워크 없이 표시
+	//  - 표시: 사이트의 주소 함수(url_from_url_from_hash)를 감싸 저장된 장은 blob 주소를 돌려줌
+	//  - 저장: 미리 받기/현재 장이 다 받아지면 같은 주소를 fetch(CORS, 대개 HTTP 캐시 적중)로 다시 읽어 저장
+	//          CORS 가 막히면 content 스크립트(GM_xmlhttpRequest)에 받아 달라고 요청
+	//  - 용량: 5GB 넘으면 즐겨찾기 아닌 작품 → 오래 안 본 작품 순으로 삭제
+	//  - 상태: <html data-hh-imgcache="…"> / 콘솔 [HH 캐시]
+	const IMG_CACHE = 'hh-img-v1';
+	const IMG_INDEX_KEY = 'hitomi_img_cache_index'; // { gid: { b: 바이트, at: 마지막 본 시각, h: [해시] } }
+	const IMG_LIMIT = 5 * 1024 ** 3;
+	const imgKey = (hash) => `https://hitomi.la/__hh_img/${hash}`;
+	const blobMap = new Map(); // hash -> blob: 주소
+	const storing = new Set();
+	let origUrlFn = null;
+	let imgCache = null;
+	let imgStats = { hit: 0, stored: 0, mode: 'cors' };
+	let favMemo = { at: 0, value: false };
+
+	function isFavGallery() {
+		if (Date.now() - favMemo.at < 2000) return favMemo.value;
+		let v = false;
+		try {
+			const gid = String(window.galleryinfo?.id || '');
+			v = !!gid && (JSON.parse(localStorage.getItem('hitomi_fav_galleries') || '[]') || []).some((g) => String(g.id) === gid);
+		} catch {}
+		favMemo = { at: Date.now(), value: v };
+		return v;
+	}
+	function publishImgCache() {
+		root.setAttribute('data-hh-imgcache', `${isFavGallery() ? 'on' : 'off'} · 캐시 ${imgStats.hit}장 · 저장 ${imgStats.stored}장 · ${imgStats.mode}`);
+	}
+	const readIndex = () => {
+		try {
+			return JSON.parse(localStorage.getItem(IMG_INDEX_KEY) || '{}') || {};
+		} catch {
+			return {};
+		}
+	};
+	const writeIndex = (idx) => {
+		try {
+			localStorage.setItem(IMG_INDEX_KEY, JSON.stringify(idx));
+		} catch {}
+	};
+	async function evictIfNeeded() {
+		const idx = readIndex();
+		let total = Object.values(idx).reduce((sum, e) => sum + (e.b || 0), 0);
+		if (total <= IMG_LIMIT) return;
+		let favs = new Set();
+		try {
+			favs = new Set((JSON.parse(localStorage.getItem('hitomi_fav_galleries') || '[]') || []).map((g) => String(g.id)));
+		} catch {}
+		const order = Object.entries(idx).sort(
+			([a, x], [b, y]) => (favs.has(a) ? 1 : 0) - (favs.has(b) ? 1 : 0) || (x.at || 0) - (y.at || 0)
+		);
+		const cacheObj = await caches.open(IMG_CACHE);
+		for (const [gid, e] of order) {
+			if (total <= IMG_LIMIT * 0.9) break;
+			if (gid === String(galleryinfo.id)) continue;
+			await Promise.all((e.h || []).map((h) => cacheObj.delete(imgKey(h))));
+			total -= e.b || 0;
+			delete idx[gid];
+			console.info('[HH 캐시] 용량 정리:', gid);
+		}
+		writeIndex(idx);
+	}
+	async function putImage(hash, blob) {
+		if (!blob || !blob.size) return;
+		try {
+			imgCache = imgCache || (await caches.open(IMG_CACHE));
+			await imgCache.put(imgKey(hash), new Response(blob, { headers: { 'Content-Type': blob.type || 'image/avif' } }));
+			const gid = String(galleryinfo.id);
+			const idx = readIndex();
+			const e = idx[gid] || { b: 0, at: Date.now(), h: [] };
+			if (!e.h.includes(hash)) {
+				e.h.push(hash);
+				e.b += blob.size;
+			}
+			e.at = Date.now();
+			idx[gid] = e;
+			writeIndex(idx);
+			imgStats.stored++;
+			publishImgCache();
+			evictIfNeeded();
+		} catch (err) {
+			console.warn('[HH 캐시] 저장 실패', err);
+		}
+	}
+	// content 스크립트가 대신 받아 준 이미지
+	window.addEventListener('message', (e) => {
+		const m = e.data;
+		if (e.source !== window || !m || m.type !== 'hh-img-blob') return;
+		storing.delete(m.hash);
+		if (m.blob) putImage(m.hash, m.blob);
+	});
+	async function storeImage(file) {
+		if (!file?.hash || blobMap.has(file.hash) || storing.has(file.hash) || !('caches' in window) || !isFavGallery()) return;
+		const url = nativeUrl(file) || manualUrl(file);
+		if (!url || url.startsWith('blob:')) return;
+		storing.add(file.hash);
+		if (imgStats.mode === 'cors') {
+			try {
+				const r = await fetch(url, { mode: 'cors', credentials: 'omit', cache: 'force-cache' });
+				if (r.ok) {
+					await putImage(file.hash, await r.blob());
+					storing.delete(file.hash);
+					return;
+				}
+			} catch {
+				imgStats.mode = 'gm'; // CORS 막힘 → 이후는 content 스크립트로
+				console.info('[HH 캐시] CORS 불가 → GM 요청으로 전환');
+				publishImgCache();
+			}
+		}
+		if (imgStats.mode === 'gm') window.postMessage({ type: 'hh-img-fetch', url, hash: file.hash }, '*');
+		else storing.delete(file.hash);
+	}
+	// 시작: 즐겨찾기 작품이면 저장된 장을 불러와 주소 함수 감싸기 + 이미 표시 중인 이미지 교체
+	async function initImgCache() {
+		if (!('caches' in window) || !isFavGallery()) return publishImgCache();
+		try {
+			navigator.storage?.persist?.(); // 브라우저가 임의로 지우지 않게 요청
+			imgCache = await caches.open(IMG_CACHE);
+			await Promise.all(
+				galleryinfo.files.map(async (f) => {
+					const r = await imgCache.match(imgKey(f.hash));
+					if (r) blobMap.set(f.hash, URL.createObjectURL(await r.blob()));
+				})
+			);
+		} catch (err) {
+			console.warn('[HH 캐시] 불러오기 실패', err);
+		}
+		imgStats.hit = blobMap.size;
+		if (blobMap.size) {
+			const idx = readIndex();
+			const gid = String(galleryinfo.id);
+			if (idx[gid]) {
+				idx[gid].at = Date.now();
+				writeIndex(idx);
+			}
+			if (typeof url_from_url_from_hash === 'function' && !origUrlFn) {
+				origUrlFn = url_from_url_from_hash;
+				window.url_from_url_from_hash = function (gid, image, dir) {
+					if (image && blobMap.has(image.hash) && (dir === undefined || dir === 'avif' || dir === 'webp')) {
+						return blobMap.get(image.hash);
+					}
+					return origUrlFn.apply(this, arguments);
+				};
+			}
+			// 이미 네트워크로 받는 중인 현재 장 교체
+			document.querySelectorAll('img').forEach((img) => {
+				const h = (img.currentSrc || img.src || '').match(/\/([0-9a-f]{64})\.(?:avif|webp)/)?.[1];
+				if (h && blobMap.has(h)) img.src = blobMap.get(h);
+			});
+			galleryinfo.files.forEach((f, i) => blobMap.has(f.hash) && readyPages.add(i + 1));
+			publish();
+		}
+		console.info(`[HH 캐시] ${galleryinfo.id}: 저장된 장 ${blobMap.size}/${galleryinfo.files.length}`);
+		publishImgCache();
+	}
+	// 현재 보고 있는 펼침도 저장 (미리 받기는 다음 장부터라서)
+	function storeCurrentSpread() {
+		if (!ready() || !isFavGallery()) return;
+		const i = currentIndex();
+		[i, i + 1].forEach((k) => galleryinfo.files[k] && storeImage(galleryinfo.files[k]));
+	}
+
 	// 이 탭이 지금 쓸 수 있는 미리 받기 예산
 	//  ahead/behind: 받을 범위, high: 높은 우선순위 장수, inflight: 동시 요청 상한(Infinity = 제한 없음)
 	function budget() {
@@ -695,9 +863,8 @@ function hitomiPrefetch(domain) {
 	// 사이트 자체 함수 (시그니처 변경 대비 try)
 	function nativeUrl(file) {
 		try {
-			return typeof url_from_url_from_hash === 'function'
-				? url_from_url_from_hash(galleryinfo.id, file, 'avif')
-				: null;
+			const fn = origUrlFn || (typeof url_from_url_from_hash === 'function' ? url_from_url_from_hash : null);
+			return fn ? fn(galleryinfo.id, file, 'avif') : null;
 		} catch {
 			return null;
 		}
@@ -768,6 +935,10 @@ function hitomiPrefetch(domain) {
 
 		order.forEach((i, rank) => {
 			if (i < 0 || i >= files.length) return;
+			if (blobMap.has(files[i].hash)) {
+				readyPages.add(i + 1); // 디스크 캐시에 있음 → 받을 필요 없음
+				return;
+			}
 			const url = urlFor(files[i]);
 			if (!url) return;
 
@@ -795,6 +966,7 @@ function hitomiPrefetch(domain) {
 				if (entry.done) return;
 				entry.done = true;
 				readyPages.add(page);
+				storeImage(files[i]); // 즐겨찾기 작품이면 디스크 캐시에 저장
 				publish();
 				schedule(); // 동시 요청 상한으로 미뤄둔 다음 장 이어 받기
 			};
@@ -868,11 +1040,19 @@ function hitomiPrefetch(domain) {
 		if (ready() || ++tries > 75) {
 			clearInterval(boot);
 			if (!galleryPublished) publishGallery();
-			if (ready()) prefetch();
+			if (ready()) {
+				initImgCache().then(() => {
+					prefetch();
+					setTimeout(storeCurrentSpread, 1500); // 현재 장이 다 받아진 뒤
+				});
+			}
 		}
 	}, 200);
 
-	window.addEventListener('hashchange', () => setTimeout(prefetch, 0));
+	window.addEventListener('hashchange', () => {
+		setTimeout(prefetch, 0);
+		setTimeout(storeCurrentSpread, 1500);
+	});
 }
 
 // =====================================================================
@@ -4435,6 +4615,7 @@ function setupReaderSlide(win) {
 }
 
 if (isReader) {
+	setupImageCacheBridge();
 	setupReaderNav(window);
 	setupReaderSlide(window);
 	setupReaderSearch();
@@ -4641,6 +4822,28 @@ function setupKoreanTagSuggest() {
 	);
 	// 사전/규칙이 바뀌면 다음 입력 때 다시 만듦
 	document.addEventListener('hh-rules-changed', () => (index = null));
+}
+
+// === 리더: 이미지 디스크 캐시의 대리 다운로드 (CORS 로 못 읽는 경우) ===
+// 페이지(미리 받기 스크립트)가 요청하면 GM_xmlhttpRequest 로 받아 Blob 으로 돌려줌
+function setupImageCacheBridge() {
+	if (typeof GM_xmlhttpRequest !== 'function') return;
+	const reply = (hash, blob) => window.postMessage({ type: 'hh-img-blob', hash, blob }, '*');
+	window.addEventListener('message', (e) => {
+		const m = e.data;
+		if (e.source !== window || !m || m.type !== 'hh-img-fetch') return;
+		if (!/^https:\/\/[\w.-]+\.gold-usergeneratedcontent\.net\//.test(m.url)) return;
+		GM_xmlhttpRequest({
+			method: 'GET',
+			url: m.url,
+			responseType: 'blob',
+			headers: { Referer: 'https://hitomi.la/' },
+			timeout: 60000,
+			onload: (r) => reply(m.hash, r.status === 200 ? r.response : null),
+			onerror: () => reply(m.hash, null),
+			ontimeout: () => reply(m.hash, null),
+		});
+	});
 }
 
 // === 리더: Cmd/Ctrl+K 검색 (자동완성 포함) ===
